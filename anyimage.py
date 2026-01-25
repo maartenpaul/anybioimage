@@ -1,6 +1,7 @@
 import anywidget
 import traitlets
 import numpy as np
+import pandas as pd
 import base64
 from io import BytesIO
 
@@ -76,7 +77,7 @@ class BioImageViewer(anywidget.AnyWidget):
         const container = document.createElement('div');
         container.className = 'bioimage-viewer';
 
-        // Controls
+        // Controls row 1: layers
         const controls = document.createElement('div');
         controls.className = 'controls';
 
@@ -106,6 +107,19 @@ class BioImageViewer(anywidget.AnyWidget):
         maskToggle.appendChild(maskCheck);
         maskToggle.appendChild(document.createTextNode(' Mask'));
 
+        // ROIs toggle
+        const roisToggle = document.createElement('label');
+        roisToggle.className = 'toggle';
+        const roisCheck = document.createElement('input');
+        roisCheck.type = 'checkbox';
+        roisCheck.checked = model.get('rois_visible');
+        roisCheck.addEventListener('change', () => {
+            model.set('rois_visible', roisCheck.checked);
+            model.save_changes();
+        });
+        roisToggle.appendChild(roisCheck);
+        roisToggle.appendChild(document.createTextNode(' ROIs'));
+
         // Opacity slider
         const opacityLabel = document.createElement('label');
         opacityLabel.className = 'opacity-control';
@@ -122,17 +136,43 @@ class BioImageViewer(anywidget.AnyWidget):
         });
         opacityLabel.appendChild(opacitySlider);
 
-        // Reset view button
-        const resetBtn = document.createElement('button');
-        resetBtn.className = 'reset-btn';
-        resetBtn.textContent = 'Reset View';
-
         controls.appendChild(imageToggle);
         controls.appendChild(maskToggle);
+        controls.appendChild(roisToggle);
         controls.appendChild(opacityLabel);
-        controls.appendChild(resetBtn);
 
-        // Canvas wrapper for overflow handling
+        // Controls row 2: tools
+        const toolbar = document.createElement('div');
+        toolbar.className = 'toolbar';
+
+        // Pan tool button
+        const panBtn = document.createElement('button');
+        panBtn.className = 'tool-btn active';
+        panBtn.textContent = 'Pan';
+        panBtn.dataset.mode = 'pan';
+
+        // Draw tool button
+        const drawBtn = document.createElement('button');
+        drawBtn.className = 'tool-btn';
+        drawBtn.textContent = 'Draw ROI';
+        drawBtn.dataset.mode = 'draw';
+
+        // Reset view button
+        const resetBtn = document.createElement('button');
+        resetBtn.className = 'tool-btn';
+        resetBtn.textContent = 'Reset View';
+
+        // Clear ROIs button
+        const clearRoisBtn = document.createElement('button');
+        clearRoisBtn.className = 'tool-btn';
+        clearRoisBtn.textContent = 'Clear ROIs';
+
+        toolbar.appendChild(panBtn);
+        toolbar.appendChild(drawBtn);
+        toolbar.appendChild(resetBtn);
+        toolbar.appendChild(clearRoisBtn);
+
+        // Canvas wrapper
         const canvasWrapper = document.createElement('div');
         canvasWrapper.className = 'canvas-wrapper';
 
@@ -142,6 +182,7 @@ class BioImageViewer(anywidget.AnyWidget):
 
         canvasWrapper.appendChild(canvas);
         container.appendChild(controls);
+        container.appendChild(toolbar);
         container.appendChild(canvasWrapper);
         el.appendChild(container);
 
@@ -149,12 +190,26 @@ class BioImageViewer(anywidget.AnyWidget):
         let scale = 1;
         let translateX = 0;
         let translateY = 0;
+
+        // Interaction state
         let isDragging = false;
+        let isDrawing = false;
         let lastX = 0;
         let lastY = 0;
+        let drawStartX = 0;
+        let drawStartY = 0;
+        let currentDrawRect = null;
 
         let baseImage = null;
         let maskCanvasEl = null;
+
+        // Coordinate conversion
+        function screenToImage(screenX, screenY) {
+            return {
+                x: (screenX - translateX) / scale,
+                y: (screenY - translateY) / scale
+            };
+        }
 
         function renderCanvas() {
             const imgWidth = model.get('width');
@@ -170,14 +225,39 @@ class BioImageViewer(anywidget.AnyWidget):
             ctx.translate(translateX, translateY);
             ctx.scale(scale, scale);
 
+            // Draw base image
             if (model.get('image_visible') && baseImage) {
                 ctx.drawImage(baseImage, 0, 0);
             }
 
+            // Draw mask overlay
             if (model.get('mask_visible') && maskCanvasEl) {
                 ctx.globalAlpha = model.get('mask_opacity');
                 ctx.drawImage(maskCanvasEl, 0, 0);
                 ctx.globalAlpha = 1.0;
+            }
+
+            // Draw ROIs
+            if (model.get('rois_visible')) {
+                const rois = model.get('_rois_data') || [];
+                const roiColor = model.get('roi_color');
+                ctx.strokeStyle = roiColor;
+                ctx.lineWidth = 2 / scale;
+                for (const roi of rois) {
+                    ctx.strokeRect(roi.x, roi.y, roi.width, roi.height);
+                }
+            }
+
+            // Draw current drawing preview
+            if (currentDrawRect && model.get('rois_visible')) {
+                ctx.strokeStyle = '#00ff00';
+                ctx.lineWidth = 2 / scale;
+                ctx.setLineDash([5 / scale, 5 / scale]);
+                ctx.strokeRect(
+                    currentDrawRect.x, currentDrawRect.y,
+                    currentDrawRect.width, currentDrawRect.height
+                );
+                ctx.setLineDash([]);
             }
 
             ctx.restore();
@@ -195,9 +275,25 @@ class BioImageViewer(anywidget.AnyWidget):
             renderCanvas();
         }
 
-        resetBtn.addEventListener('click', resetView);
+        function updateToolMode(mode) {
+            model.set('tool_mode', mode);
+            model.save_changes();
+            panBtn.classList.toggle('active', mode === 'pan');
+            drawBtn.classList.toggle('active', mode === 'draw');
+            canvas.style.cursor = mode === 'pan' ? 'grab' : 'crosshair';
+        }
 
-        // Zoom with mouse wheel
+        // Tool button handlers
+        panBtn.addEventListener('click', () => updateToolMode('pan'));
+        drawBtn.addEventListener('click', () => updateToolMode('draw'));
+        resetBtn.addEventListener('click', resetView);
+        clearRoisBtn.addEventListener('click', () => {
+            model.set('_rois_data', []);
+            model.save_changes();
+            renderCanvas();
+        });
+
+        // Zoom with mouse wheel (always active)
         canvas.addEventListener('wheel', (e) => {
             e.preventDefault();
             const rect = canvas.getBoundingClientRect();
@@ -207,7 +303,6 @@ class BioImageViewer(anywidget.AnyWidget):
             const zoom = e.deltaY < 0 ? 1.1 : 0.9;
             const newScale = Math.min(Math.max(scale * zoom, 0.1), 20);
 
-            // Zoom centered on mouse position
             translateX = mouseX - (mouseX - translateX) * (newScale / scale);
             translateY = mouseY - (mouseY - translateY) * (newScale / scale);
             scale = newScale;
@@ -215,29 +310,84 @@ class BioImageViewer(anywidget.AnyWidget):
             renderCanvas();
         });
 
-        // Pan with mouse drag
+        // Mouse down handler
         canvas.addEventListener('mousedown', (e) => {
-            isDragging = true;
-            lastX = e.clientX;
-            lastY = e.clientY;
-            canvas.style.cursor = 'grabbing';
+            const rect = canvas.getBoundingClientRect();
+            const screenX = e.clientX - rect.left;
+            const screenY = e.clientY - rect.top;
+
+            if (model.get('tool_mode') === 'draw') {
+                // Start drawing ROI
+                isDrawing = true;
+                const imgCoords = screenToImage(screenX, screenY);
+                drawStartX = imgCoords.x;
+                drawStartY = imgCoords.y;
+                currentDrawRect = { x: drawStartX, y: drawStartY, width: 0, height: 0 };
+            } else {
+                // Start panning
+                isDragging = true;
+                lastX = e.clientX;
+                lastY = e.clientY;
+                canvas.style.cursor = 'grabbing';
+            }
         });
 
+        // Mouse move handler
         window.addEventListener('mousemove', (e) => {
-            if (!isDragging) return;
-            translateX += e.clientX - lastX;
-            translateY += e.clientY - lastY;
-            lastX = e.clientX;
-            lastY = e.clientY;
-            renderCanvas();
+            const rect = canvas.getBoundingClientRect();
+            const screenX = e.clientX - rect.left;
+            const screenY = e.clientY - rect.top;
+
+            if (isDrawing) {
+                const imgCoords = screenToImage(screenX, screenY);
+                currentDrawRect = {
+                    x: Math.min(drawStartX, imgCoords.x),
+                    y: Math.min(drawStartY, imgCoords.y),
+                    width: Math.abs(imgCoords.x - drawStartX),
+                    height: Math.abs(imgCoords.y - drawStartY)
+                };
+                renderCanvas();
+            } else if (isDragging) {
+                translateX += e.clientX - lastX;
+                translateY += e.clientY - lastY;
+                lastX = e.clientX;
+                lastY = e.clientY;
+                renderCanvas();
+            }
         });
 
+        // Mouse up handler
         window.addEventListener('mouseup', () => {
-            isDragging = false;
-            canvas.style.cursor = 'grab';
+            if (isDrawing && currentDrawRect) {
+                // Finalize ROI if it has reasonable size
+                if (currentDrawRect.width > 5 && currentDrawRect.height > 5) {
+                    const rois = model.get('_rois_data') || [];
+                    const newRoi = {
+                        id: 'roi_' + Date.now(),
+                        x: Math.round(currentDrawRect.x),
+                        y: Math.round(currentDrawRect.y),
+                        width: Math.round(currentDrawRect.width),
+                        height: Math.round(currentDrawRect.height)
+                    };
+                    rois.push(newRoi);
+                    model.set('_rois_data', [...rois]);
+                    model.save_changes();
+                }
+                currentDrawRect = null;
+                isDrawing = false;
+                renderCanvas();
+            }
+
+            if (isDragging) {
+                isDragging = false;
+                if (model.get('tool_mode') === 'pan') {
+                    canvas.style.cursor = 'grab';
+                }
+            }
         });
 
-        canvas.style.cursor = 'grab';
+        // Set initial cursor
+        canvas.style.cursor = model.get('tool_mode') === 'pan' ? 'grab' : 'crosshair';
 
         async function loadBaseImage() {
             const imageData = model.get('image_data');
@@ -271,11 +421,19 @@ class BioImageViewer(anywidget.AnyWidget):
         model.on('change:mask_data', loadMaskImage);
         model.on('change:image_visible', renderCanvas);
         model.on('change:mask_visible', renderCanvas);
+        model.on('change:rois_visible', renderCanvas);
         model.on('change:mask_opacity', renderCanvas);
+        model.on('change:_rois_data', renderCanvas);
+        model.on('change:roi_color', renderCanvas);
         model.on('change:width', resetView);
         model.on('change:height', resetView);
+        model.on('change:tool_mode', () => {
+            const mode = model.get('tool_mode');
+            panBtn.classList.toggle('active', mode === 'pan');
+            drawBtn.classList.toggle('active', mode === 'draw');
+            canvas.style.cursor = mode === 'pan' ? 'grab' : 'crosshair';
+        });
 
-        // Handle resize
         new ResizeObserver(() => renderCanvas()).observe(canvasWrapper);
     }
 
@@ -287,9 +445,9 @@ class BioImageViewer(anywidget.AnyWidget):
         font-family: system-ui, -apple-system, sans-serif;
         padding: 8px;
     }
-    .controls {
+    .controls, .toolbar {
         display: flex;
-        gap: 16px;
+        gap: 12px;
         margin-bottom: 8px;
         align-items: center;
         flex-wrap: wrap;
@@ -308,15 +466,21 @@ class BioImageViewer(anywidget.AnyWidget):
     .opacity-control input[type="range"] {
         width: 100px;
     }
-    .reset-btn {
-        padding: 4px 8px;
+    .tool-btn {
+        padding: 4px 10px;
         border: 1px solid #ccc;
         border-radius: 4px;
         background: #f5f5f5;
         cursor: pointer;
+        font-size: 13px;
     }
-    .reset-btn:hover {
+    .tool-btn:hover {
         background: #e8e8e8;
+    }
+    .tool-btn.active {
+        background: #0066cc;
+        color: white;
+        border-color: #0066cc;
     }
     .canvas-wrapper {
         border: 1px solid #ccc;
@@ -335,13 +499,18 @@ class BioImageViewer(anywidget.AnyWidget):
         .canvas-wrapper {
             border-color: #444;
         }
-        .reset-btn {
+        .tool-btn {
             background: #333;
             border-color: #555;
             color: #e0e0e0;
         }
-        .reset-btn:hover {
+        .tool-btn:hover {
             background: #444;
+        }
+        .tool-btn.active {
+            background: #0066cc;
+            border-color: #0066cc;
+            color: white;
         }
     }
     """
@@ -358,6 +527,28 @@ class BioImageViewer(anywidget.AnyWidget):
     # Image dimensions
     width = traitlets.Int(0).tag(sync=True)
     height = traitlets.Int(0).tag(sync=True)
+
+    # ROI annotation
+    tool_mode = traitlets.Unicode('pan').tag(sync=True)  # 'pan' or 'draw'
+    _rois_data = traitlets.List(traitlets.Dict()).tag(sync=True)
+    rois_visible = traitlets.Bool(True).tag(sync=True)
+    roi_color = traitlets.Unicode('#ff0000').tag(sync=True)
+
+    @property
+    def rois_df(self) -> pd.DataFrame:
+        """Get ROIs as a pandas DataFrame."""
+        if not self._rois_data:
+            return pd.DataFrame(columns=['id', 'x', 'y', 'width', 'height'])
+        return pd.DataFrame(self._rois_data)
+
+    @rois_df.setter
+    def rois_df(self, df: pd.DataFrame):
+        """Set ROIs from a pandas DataFrame."""
+        self._rois_data = df.to_dict('records')
+
+    def clear_rois(self):
+        """Clear all ROIs."""
+        self._rois_data = []
 
     def set_image(self, data: np.ndarray):
         """Set the base image from a numpy array."""
