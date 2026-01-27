@@ -5,9 +5,21 @@ An interactive image viewer widget for Jupyter/marimo notebooks with support for
 ## Installation
 
 ```bash
-uv pip install anywidget numpy pandas pillow
-# Optional: scipy (for contour rendering)
+# Install from source
+uv pip install -e .
+
+# With SAM support
+uv pip install -e ".[sam]"
+
+# With all optional dependencies
+uv pip install -e ".[all]"
 ```
+
+### Optional Dependencies
+- `sam` - SAM/MobileSAM segmentation (`ultralytics`)
+- `contours` - Contour rendering (`scipy`)
+- `bioio` - BioImage file reading (`bioio`, `bioio-tifffile`)
+- `dev` - Development tools (`marimo`, `pytest`, `ruff`)
 
 ## Quick Start
 
@@ -101,6 +113,44 @@ The toolbar provides:
 - Layers dropdown for visibility, opacity, and color controls
 
 The status bar shows current tool, cursor position, and zoom level.
+
+## SAM Integration
+
+Automatic segmentation using Segment Anything Model (SAM) when drawing rectangles.
+
+### Installation
+```bash
+uv pip install -e ".[sam]"
+```
+
+### Usage
+```python
+viewer = BioImageViewer()
+viewer.set_image(image_array)
+
+# Enable SAM - rectangle ROIs trigger segmentation
+viewer.enable_sam(model_type="mobile_sam")
+
+widget = mo.ui.anywidget(viewer)
+```
+
+### Available Models
+| Model | Size | Speed | Command |
+|-------|------|-------|---------|
+| MobileSAM | ~40MB | ~10ms | `enable_sam("mobile_sam")` |
+| FastSAM | ~140MB | ~40ms | `enable_sam("fast_sam")` |
+| SAM Base | ~375MB | ~50ms | `enable_sam("sam_b")` |
+| SAM Large | ~1.2GB | ~100ms | `enable_sam("sam_l")` |
+
+### How it Works
+1. Draw a rectangle around an object
+2. SAM automatically generates a segmentation mask
+3. Mask is added as a new layer
+
+```python
+# Disable SAM when done
+viewer.disable_sam()
+```
 
 ## License
 

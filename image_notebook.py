@@ -35,15 +35,6 @@ def _(BioImageViewer, img, mask, mo):
         opacity=0.5,
         contours_only=False
     )
-    flipped = mask.data.copy()
-    flipped = flipped[:, ::-1]
-    viewer.add_mask(
-        flipped,
-        name="Segmentation",
-        color="#ff0000",
-        opacity=0.5,
-        contours_only=False
-    )
 
     # You can add additional masks with different settings:
     # viewer.add_mask(another_mask, name="Nuclei", color="#00ff00", opacity=0.3)

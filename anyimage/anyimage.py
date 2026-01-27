@@ -1,9 +1,10 @@
-import anywidget
-import traitlets
-import numpy as np
-import pandas as pd
 import base64
 from io import BytesIO
+
+import anywidget
+import numpy as np
+import pandas as pd
+import traitlets
 
 
 def _normalize_image(data: np.ndarray) -> np.ndarray:
@@ -1298,6 +1299,10 @@ class BioImageViewer(anywidget.AnyWidget):
 
         self.height, self.width = data.shape[:2]
         normalized = _normalize_image(data)
+
+        # Store for SAM integration
+        self._image_array = normalized
+
         self.image_data = _array_to_base64(normalized)
 
     def add_mask(
@@ -1507,3 +1512,256 @@ class BioImageViewer(anywidget.AnyWidget):
         self._points_data = []
         self.selected_annotation_id = ""
         self.selected_annotation_type = ""
+
+    # ==================== SAM Integration ====================
+
+    def enable_sam(self, model_type: str = "mobile_sam"):
+        """Enable SAM segmentation triggered by rectangle ROIs.
+
+        Args:
+            model_type: SAM model to use. Options:
+                - "mobile_sam" (default, ~40MB, fastest)
+                - "sam_b" (SAM base)
+                - "sam_l" (SAM large)
+                - "fast_sam" (FastSAM)
+
+        Requires: pip install ultralytics
+        """
+        try:
+            from ultralytics import SAM
+        except ImportError:
+            raise ImportError(
+                "SAM requires ultralytics. Install with: pip install ultralytics"
+            )
+
+        # Model file mapping
+        model_files = {
+            "mobile_sam": "mobile_sam.pt",
+            "sam_b": "sam_b.pt",
+            "sam_l": "sam_l.pt",
+            "fast_sam": "FastSAM-s.pt",
+        }
+
+        if model_type not in model_files:
+            raise ValueError(f"Unknown model_type: {model_type}. Choose from {list(model_files.keys())}")
+
+        self._sam_model = SAM(model_files[model_type])
+        self._sam_enabled = True
+        self._sam_model_type = model_type
+        self._processed_roi_ids = set()
+        self._processed_point_ids = set()
+        self._sam_label_counter = 0
+        self._sam_mask_id = None
+        self._sam_labels_array = None
+
+        # Set up observers for ROI and point changes
+        self.observe(self._on_rois_changed, names=["_rois_data"])
+        self.observe(self._on_points_changed, names=["_points_data"])
+
+    def disable_sam(self):
+        """Disable SAM segmentation."""
+        self._sam_enabled = False
+        self._sam_model = None
+        self._sam_mask_id = None
+        self._sam_labels_array = None
+        self._sam_label_counter = 0
+        try:
+            self.unobserve(self._on_rois_changed, names=["_rois_data"])
+        except ValueError:
+            pass  # Observer might not be registered
+        try:
+            self.unobserve(self._on_points_changed, names=["_points_data"])
+        except ValueError:
+            pass
+
+    def clear_sam_masks(self):
+        """Clear all SAM-generated masks and reset the label counter."""
+        if self._sam_mask_id and self._sam_mask_id in [m["id"] for m in self._masks_data]:
+            self.remove_mask(self._sam_mask_id)
+        self._sam_mask_id = None
+        self._sam_labels_array = None
+        self._sam_label_counter = 0
+        self._processed_roi_ids = set()
+        self._processed_point_ids = set()
+
+    def _on_rois_changed(self, change):
+        """Observer callback when ROIs change."""
+        if not getattr(self, "_sam_enabled", False):
+            return
+
+        new_rois = change.get("new", [])
+        if not new_rois:
+            return
+
+        # Find new ROIs that haven't been processed
+        for roi in new_rois:
+            roi_id = roi.get("id", "")
+            if roi_id and roi_id not in self._processed_roi_ids:
+                self._processed_roi_ids.add(roi_id)
+                self._run_sam_on_roi(roi)
+
+    def _on_points_changed(self, change):
+        """Observer callback when points change."""
+        if not getattr(self, "_sam_enabled", False):
+            return
+
+        new_points = change.get("new", [])
+        if not new_points:
+            return
+
+        # Find new points that haven't been processed
+        for point in new_points:
+            point_id = point.get("id", "")
+            if point_id and point_id not in self._processed_point_ids:
+                self._processed_point_ids.add(point_id)
+                self._run_sam_on_point(point)
+
+    def _run_sam_on_point(self, point: dict):
+        """Run SAM segmentation on a point prompt."""
+        if not hasattr(self, "_sam_model") or self._sam_model is None:
+            return
+
+        if not hasattr(self, "_image_array") or self._image_array is None:
+            return
+
+        x = int(point["x"])
+        y = int(point["y"])
+
+        try:
+            # Ensure array is contiguous
+            image = np.ascontiguousarray(self._image_array).copy()
+
+            # Convert grayscale to RGB if needed
+            if image.ndim == 2:
+                image = np.stack([image, image, image], axis=-1)
+
+            # Run SAM prediction with point prompt (label=1 means foreground)
+            results = self._sam_model.predict(
+                image,
+                points=[[x, y]],
+                labels=[1],
+                verbose=False
+            )
+
+            if results and len(results) > 0 and results[0].masks is not None:
+                # Get the binary mask
+                mask_data = results[0].masks.data[0].cpu().numpy().astype(bool)
+
+                # Increment label counter for unique color
+                self._sam_label_counter += 1
+
+                # Initialize or update the combined labels array
+                if self._sam_labels_array is None:
+                    self._sam_labels_array = np.zeros(
+                        (self.height, self.width), dtype=np.uint16
+                    )
+
+                # Add new mask with unique label
+                new_mask_region = mask_data & (self._sam_labels_array == 0)
+                self._sam_labels_array[new_mask_region] = self._sam_label_counter
+
+                # Update or create the SAM mask layer
+                if self._sam_mask_id is None:
+                    self._sam_mask_id = self.add_mask(
+                        self._sam_labels_array,
+                        name="SAM Masks",
+                        opacity=0.5,
+                        contours_only=False
+                    )
+                else:
+                    self._update_sam_mask_layer()
+
+                # Remove the point after processing
+                self._points_data = [p for p in self._points_data if p["id"] != point["id"]]
+
+        except Exception as e:
+            print(f"SAM point prediction failed: {e}")
+
+    def _run_sam_on_roi(self, roi: dict):
+        """Run SAM segmentation on a bounding box ROI."""
+        if not hasattr(self, "_sam_model") or self._sam_model is None:
+            return
+
+        if not hasattr(self, "_image_array") or self._image_array is None:
+            return
+
+        # Convert ROI to bounding box format [x1, y1, x2, y2]
+        x1 = int(roi["x"])
+        y1 = int(roi["y"])
+        x2 = int(roi["x"] + roi["width"])
+        y2 = int(roi["y"] + roi["height"])
+
+        try:
+            # Ensure array is contiguous (fixes negative stride error)
+            image = np.ascontiguousarray(self._image_array).copy()
+
+            # Convert grayscale to RGB if needed (SAM expects RGB)
+            if image.ndim == 2:
+                image = np.stack([image, image, image], axis=-1)
+
+            # Run SAM prediction
+            results = self._sam_model.predict(
+                image,
+                bboxes=[[x1, y1, x2, y2]],
+                verbose=False
+            )
+
+            if results and len(results) > 0 and results[0].masks is not None:
+                # Get the binary mask
+                mask_data = results[0].masks.data[0].cpu().numpy().astype(bool)
+
+                # Increment label counter for unique color
+                self._sam_label_counter += 1
+
+                # Initialize or update the combined labels array
+                if self._sam_labels_array is None:
+                    self._sam_labels_array = np.zeros(
+                        (self.height, self.width), dtype=np.uint16
+                    )
+
+                # Add new mask with unique label (don't overwrite existing labels)
+                new_mask_region = mask_data & (self._sam_labels_array == 0)
+                self._sam_labels_array[new_mask_region] = self._sam_label_counter
+
+                # Update or create the SAM mask layer
+                if self._sam_mask_id is None:
+                    self._sam_mask_id = self.add_mask(
+                        self._sam_labels_array,
+                        name="SAM Masks",
+                        opacity=0.5,
+                        contours_only=False
+                    )
+                else:
+                    # Update existing mask layer
+                    self._update_sam_mask_layer()
+
+                # Remove the ROI after processing
+                self._rois_data = [r for r in self._rois_data if r["id"] != roi["id"]]
+
+        except Exception as e:
+            print(f"SAM prediction failed: {e}")
+
+    def _update_sam_mask_layer(self):
+        """Update the SAM mask layer with new labels."""
+        if self._sam_mask_id is None or self._sam_labels_array is None:
+            return
+
+        # Store raw labels
+        self._mask_arrays[self._sam_mask_id] = self._sam_labels_array
+
+        # Generate new RGBA
+        rgba = _labels_to_rgba(self._sam_labels_array, contours_only=False, contour_width=1)
+        data_b64 = _array_to_base64(rgba)
+
+        # Update cache
+        self._mask_caches[self._sam_mask_id] = {(False, 1): data_b64}
+
+        # Update the mask data
+        updated_masks = []
+        for mask in self._masks_data:
+            if mask["id"] == self._sam_mask_id:
+                updated_masks.append({**mask, "data": data_b64})
+            else:
+                updated_masks.append(mask)
+        self._masks_data = updated_masks
+
