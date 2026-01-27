@@ -89,6 +89,9 @@ class BioImageViewer(anywidget.AnyWidget):
         self._mask_arrays = {}  # Store raw label arrays by mask id
         self._mask_caches = {}  # Cache rendered versions by mask id
 
+        # Observer for SAM label deletion
+        self.observe(self._on_delete_sam_at, names=["_delete_sam_at"])
+
     _esm = """
     async function loadImage(base64Data) {
         return new Promise((resolve, reject) => {
@@ -412,6 +415,7 @@ class BioImageViewer(anywidget.AnyWidget):
         let currentMousePos = null;
         let baseImage = null;
         let maskCanvases = {};  // Cache for mask canvas elements
+        let lastClickedSamCoords = null;  // For SAM mask deletion
 
         const TOOL_NAMES = {
             'pan': 'Pan',
@@ -746,13 +750,22 @@ class BioImageViewer(anywidget.AnyWidget):
             else if (e.key === 'Escape') {
                 currentPolygonPoints = [];
                 currentDrawRect = null;
+                lastClickedSamCoords = null;
                 model.set('selected_annotation_id', '');
                 model.set('selected_annotation_type', '');
                 model.save_changes();
                 renderCanvas();
             }
             else if (e.key === 'Delete' || e.key === 'Backspace') {
-                deleteSelectedAnnotation();
+                const selectedId = model.get('selected_annotation_id');
+                if (selectedId) {
+                    deleteSelectedAnnotation();
+                } else if (lastClickedSamCoords) {
+                    // Delete SAM mask at clicked location
+                    model.set('_delete_sam_at', lastClickedSamCoords);
+                    model.save_changes();
+                    lastClickedSamCoords = null;
+                }
             }
         });
 
@@ -784,9 +797,13 @@ class BioImageViewer(anywidget.AnyWidget):
                 if (found) {
                     model.set('selected_annotation_id', found.id);
                     model.set('selected_annotation_type', found.type);
+                    // Clear SAM selection
+                    lastClickedSamCoords = null;
                 } else {
                     model.set('selected_annotation_id', '');
                     model.set('selected_annotation_type', '');
+                    // Store coordinates for potential SAM mask deletion
+                    lastClickedSamCoords = { x: Math.round(imgCoords.x), y: Math.round(imgCoords.y) };
                 }
                 model.save_changes();
                 renderCanvas();
@@ -1290,6 +1307,9 @@ class BioImageViewer(anywidget.AnyWidget):
     selected_annotation_id = traitlets.Unicode("").tag(sync=True)
     selected_annotation_type = traitlets.Unicode("").tag(sync=True)
 
+    # SAM label deletion - set coordinates to delete SAM label at that position
+    _delete_sam_at = traitlets.Dict(allow_none=True).tag(sync=True)
+
     def set_image(self, data: np.ndarray):
         """Set the base image from a numpy array."""
         if data.ndim > 2:
@@ -1583,6 +1603,40 @@ class BioImageViewer(anywidget.AnyWidget):
         self._sam_label_counter = 0
         self._processed_roi_ids = set()
         self._processed_point_ids = set()
+
+    def _on_delete_sam_at(self, change):
+        """Observer callback to delete SAM label at given coordinates."""
+        coords = change.get("new")
+        if coords and isinstance(coords, dict) and "x" in coords and "y" in coords:
+            self.delete_sam_label_at(int(coords["x"]), int(coords["y"]))
+
+    def delete_sam_label_at(self, x: int, y: int):
+        """Delete the SAM label at the given coordinates."""
+        if self._sam_labels_array is None:
+            return
+
+        # Check bounds
+        if x < 0 or x >= self.width or y < 0 or y >= self.height:
+            return
+
+        # Get the label at this position
+        label = self._sam_labels_array[y, x]
+        if label == 0:
+            return  # No label at this position
+
+        # Remove this label from the array
+        self._sam_labels_array[self._sam_labels_array == label] = 0
+
+        # Check if any labels remain
+        if np.max(self._sam_labels_array) == 0:
+            # No labels left, remove the mask layer
+            if self._sam_mask_id:
+                self.remove_mask(self._sam_mask_id)
+            self._sam_mask_id = None
+            self._sam_labels_array = None
+        else:
+            # Update the mask layer
+            self._update_sam_mask_layer()
 
     def _on_rois_changed(self, change):
         """Observer callback when ROIs change."""
