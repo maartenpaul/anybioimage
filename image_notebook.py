@@ -10,31 +10,39 @@ def _():
     import pandas as pd
     from bioio import BioImage
     import bioio_tifffile
+    import bioio_ome_zarr
     from anyimage import BioImageViewer
     return BioImage, BioImageViewer, bioio_tifffile, mo, pd
 
 
 @app.cell
 def _(BioImage, bioio_tifffile):
-    img = BioImage("image.tif", reader=bioio_tifffile.Reader)
-    mask = BioImage("mask.tif", reader=bioio_tifffile.Reader)
-    return img, mask
+    #img = BioImage("fluocell.tif", reader=bioio_tifffile.Reader)
+    img = BioImage("fluocell.tif", reader=bioio_tifffile.Reader)
+
+    #img = BioImage("image.tif", reader=bioio_tifffile.Reader)
+    #img = BioImage("image.zarr", reader=bioio_ome_zarr.Reader)
+
+    #mask = BioImage("mask.tif", reader=bioio_tifffile.Reader)
+    return (img,)
 
 
 @app.cell
-def _(BioImageViewer, img, mask, mo):
+def _(BioImageViewer, img, mo):
     viewer = BioImageViewer()
-    viewer.set_image(img.data)
+    # Pass BioImage directly for lazy loading and 5D support
+    # This enables T, Z, C sliders when the image has multiple dimensions
+    viewer.set_image(img)
 
     # Add multiple mask layers with different colors and settings
     # Each mask can have its own name, color, opacity, and visibility
-    viewer.add_mask(
-        mask.data,
-        name="Segmentation",
-        color="#ff0000",
-        opacity=0.5,
-        contours_only=False
-    )
+    #viewer.add_mask(
+    #    mask.data,
+    #    name="Segmentation",
+     ##   color="#ff0000",
+    #    opacity=0.5,
+    #    contours_only=False
+    #)
 
     # You can add additional masks with different settings:
     # viewer.add_mask(another_mask, name="Nuclei", color="#00ff00", opacity=0.3)

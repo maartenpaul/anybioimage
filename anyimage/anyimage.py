@@ -1,4 +1,5 @@
 import base64
+from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
 
 import anywidget
@@ -80,6 +81,72 @@ MASK_COLORS = [
     "#dfe6e9", "#fd79a8", "#a29bfe", "#6c5ce7", "#00b894"
 ]
 
+# Default colors for channels (common microscopy LUTs)
+CHANNEL_COLORS = [
+    "#00ff00",  # Green (GFP)
+    "#ff0000",  # Red (RFP/mCherry)
+    "#0000ff",  # Blue (DAPI)
+    "#ff00ff",  # Magenta
+    "#00ffff",  # Cyan
+    "#ffff00",  # Yellow
+    "#ff8000",  # Orange
+    "#ffffff",  # White/Gray
+]
+
+
+def _hex_to_rgb(hex_color: str) -> tuple:
+    """Convert hex color to RGB tuple (0-255)."""
+    hex_color = hex_color.lstrip("#")
+    return tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
+
+
+def _composite_channels(
+    channels: list[np.ndarray],
+    colors: list[str],
+    mins: list[float],
+    maxs: list[float],
+) -> np.ndarray:
+    """Composite multiple channels into an RGB image.
+
+    Args:
+        channels: List of 2D arrays (one per channel)
+        colors: List of hex colors for each channel
+        mins: List of min values (0-1) for contrast
+        maxs: List of max values (0-1) for contrast
+
+    Returns:
+        RGB image as uint8 array (H, W, 3)
+    """
+    if not channels:
+        return np.zeros((1, 1, 3), dtype=np.uint8)
+
+    height, width = channels[0].shape
+    composite = np.zeros((height, width, 3), dtype=np.float64)
+
+    for ch_data, color, vmin, vmax in zip(channels, colors, mins, maxs):
+        # Normalize channel data to 0-1
+        ch_float = ch_data.astype(np.float64)
+        ch_min, ch_max = ch_float.min(), ch_float.max()
+        if ch_max > ch_min:
+            ch_norm = (ch_float - ch_min) / (ch_max - ch_min)
+        else:
+            ch_norm = np.zeros_like(ch_float)
+
+        # Apply contrast limits
+        ch_norm = np.clip((ch_norm - vmin) / (vmax - vmin + 1e-10), 0, 1)
+
+        # Get RGB color
+        r, g, b = _hex_to_rgb(color)
+
+        # Additive blending
+        composite[:, :, 0] += ch_norm * r
+        composite[:, :, 1] += ch_norm * g
+        composite[:, :, 2] += ch_norm * b
+
+    # Clip and convert to uint8
+    composite = np.clip(composite, 0, 255).astype(np.uint8)
+    return composite
+
 
 class BioImageViewer(anywidget.AnyWidget):
     """Anywidget for viewing bioimages with multiple mask layers and annotation tools."""
@@ -88,9 +155,19 @@ class BioImageViewer(anywidget.AnyWidget):
         super().__init__(**kwargs)
         self._mask_arrays = {}  # Store raw label arrays by mask id
         self._mask_caches = {}  # Cache rendered versions by mask id
+        self._bioimage = None  # Store BioImage reference for lazy loading
+        self._slice_cache = {}  # LRU cache for slice data: (T, C, Z) -> np.ndarray
+        self._slice_cache_max_size = 64  # Max number of cached slices
+        self._prefetch_executor = ThreadPoolExecutor(max_workers=2)  # Background prefetching
 
         # Observer for SAM label deletion
         self.observe(self._on_delete_sam_at, names=["_delete_sam_at"])
+
+        # Observers for dimension changes
+        self.observe(self._on_dimension_change, names=["current_t", "current_z"])
+        self.observe(self._on_resolution_change, names=["current_resolution"])
+        self.observe(self._on_scene_change, names=["current_scene"])
+        self.observe(self._on_channel_settings_change, names=["_channel_settings"])
 
     _esm = """
     async function loadImage(base64Data) {
@@ -463,6 +540,272 @@ class BioImageViewer(anywidget.AnyWidget):
 
         canvasWrapper.appendChild(canvas);
 
+        // Dimension controls panel
+        const dimControls = document.createElement('div');
+        dimControls.className = 'dimension-controls';
+
+        function createDimSlider(label, dimKey, currentKey, maxVal) {
+            const wrapper = document.createElement('div');
+            wrapper.className = 'dim-slider-wrapper';
+
+            const labelEl = document.createElement('span');
+            labelEl.className = 'dim-label';
+            labelEl.textContent = label;
+
+            const slider = document.createElement('input');
+            slider.type = 'range';
+            slider.min = '0';
+            slider.max = String(maxVal - 1);
+            slider.value = String(model.get(currentKey) || 0);
+            slider.className = 'dim-slider';
+
+            const valueEl = document.createElement('span');
+            valueEl.className = 'dim-value';
+            valueEl.textContent = `${model.get(currentKey) || 0}/${maxVal}`;
+
+            let debounceTimer = null;
+            let previewTimer = null;
+
+            slider.addEventListener('input', () => {
+                const val = parseInt(slider.value);
+                valueEl.textContent = `${val}/${maxVal}`;
+
+                // Enter preview mode for quick low-res updates
+                if (!model.get('_preview_mode')) {
+                    model.set('_preview_mode', true);
+                    model.save_changes();
+                }
+
+                // Send preview update with small debounce
+                if (previewTimer) clearTimeout(previewTimer);
+                previewTimer = setTimeout(() => {
+                    model.set(currentKey, val);
+                    model.save_changes();
+                }, 30);
+
+                // After longer pause, exit preview mode for full-res
+                if (debounceTimer) clearTimeout(debounceTimer);
+                debounceTimer = setTimeout(() => {
+                    model.set('_preview_mode', false);
+                    model.set(currentKey, val);
+                    model.save_changes();
+                }, 200);
+            });
+
+            model.on(`change:${currentKey}`, () => {
+                slider.value = String(model.get(currentKey));
+                valueEl.textContent = `${model.get(currentKey)}/${maxVal}`;
+            });
+
+            wrapper.appendChild(labelEl);
+            wrapper.appendChild(slider);
+            wrapper.appendChild(valueEl);
+            return wrapper;
+        }
+
+        function createSceneSelector() {
+            const wrapper = document.createElement('div');
+            wrapper.className = 'scene-selector-wrapper';
+
+            const labelEl = document.createElement('span');
+            labelEl.className = 'dim-label';
+            labelEl.textContent = 'Scene';
+
+            const select = document.createElement('select');
+            select.className = 'scene-select';
+
+            const scenes = model.get('scenes') || [];
+            scenes.forEach(scene => {
+                const opt = document.createElement('option');
+                opt.value = scene;
+                opt.textContent = scene;
+                if (scene === model.get('current_scene')) opt.selected = true;
+                select.appendChild(opt);
+            });
+
+            select.addEventListener('change', () => {
+                model.set('current_scene', select.value);
+                model.save_changes();
+            });
+
+            wrapper.appendChild(labelEl);
+            wrapper.appendChild(select);
+            return wrapper;
+        }
+
+        function createChannelControls() {
+            const wrapper = document.createElement('div');
+            wrapper.className = 'channel-controls';
+
+            const channelSettings = model.get('_channel_settings') || [];
+            if (channelSettings.length <= 1) return wrapper;
+
+            const label = document.createElement('span');
+            label.className = 'dim-label';
+            label.textContent = 'Channels';
+            wrapper.appendChild(label);
+
+            channelSettings.forEach((ch, idx) => {
+                const chItem = document.createElement('div');
+                chItem.className = 'channel-chip';
+
+                const toggle = document.createElement('input');
+                toggle.type = 'checkbox';
+                toggle.checked = ch.visible !== false;
+                toggle.className = 'channel-toggle';
+                toggle.addEventListener('change', (e) => {
+                    e.stopPropagation();
+                    const settings = [...model.get('_channel_settings')];
+                    settings[idx] = { ...settings[idx], visible: toggle.checked };
+                    model.set('_channel_settings', settings);
+                    model.save_changes();
+                });
+
+                const colorDot = document.createElement('span');
+                colorDot.className = 'channel-dot';
+                colorDot.style.backgroundColor = ch.color || '#ffffff';
+
+                const name = document.createElement('span');
+                name.className = 'channel-name';
+                name.textContent = ch.name || `Ch ${idx}`;
+
+                chItem.appendChild(toggle);
+                chItem.appendChild(colorDot);
+                chItem.appendChild(name);
+
+                // Popup for contrast controls
+                const popup = document.createElement('div');
+                popup.className = 'channel-popup';
+
+                // Prevent popup from closing when interacting inside it
+                popup.addEventListener('click', (e) => e.stopPropagation());
+                popup.addEventListener('mousedown', (e) => e.stopPropagation());
+                popup.addEventListener('mouseup', (e) => e.stopPropagation());
+
+                const popupHeader = document.createElement('div');
+                popupHeader.className = 'popup-header';
+                popupHeader.textContent = ch.name || `Channel ${idx}`;
+
+                const colorRow = document.createElement('div');
+                colorRow.className = 'popup-row';
+                const colorLabel = document.createElement('span');
+                colorLabel.textContent = 'Color';
+                const colorPicker = document.createElement('input');
+                colorPicker.type = 'color';
+                colorPicker.value = ch.color || '#ffffff';
+                colorPicker.className = 'popup-color';
+                colorPicker.addEventListener('click', (e) => e.stopPropagation());
+                colorPicker.addEventListener('input', (e) => {
+                    const settings = [...model.get('_channel_settings')];
+                    settings[idx] = { ...settings[idx], color: colorPicker.value };
+                    model.set('_channel_settings', settings);
+                    model.save_changes();
+                    colorDot.style.backgroundColor = colorPicker.value;
+                });
+                colorRow.appendChild(colorLabel);
+                colorRow.appendChild(colorPicker);
+
+                const minRow = document.createElement('div');
+                minRow.className = 'popup-row';
+                const minLabel = document.createElement('span');
+                minLabel.textContent = 'Min';
+                const minSlider = document.createElement('input');
+                minSlider.type = 'range';
+                minSlider.min = '0';
+                minSlider.max = '100';
+                minSlider.value = String((ch.min || 0) * 100);
+                minSlider.className = 'popup-slider';
+                const minValue = document.createElement('span');
+                minValue.className = 'popup-value';
+                minValue.textContent = Math.round((ch.min || 0) * 100) + '%';
+                minSlider.addEventListener('input', (e) => {
+                    const settings = [...model.get('_channel_settings')];
+                    settings[idx] = { ...settings[idx], min: parseInt(minSlider.value) / 100 };
+                    model.set('_channel_settings', settings);
+                    model.save_changes();
+                    minValue.textContent = minSlider.value + '%';
+                });
+                minRow.appendChild(minLabel);
+                minRow.appendChild(minSlider);
+                minRow.appendChild(minValue);
+
+                const maxRow = document.createElement('div');
+                maxRow.className = 'popup-row';
+                const maxLabel = document.createElement('span');
+                maxLabel.textContent = 'Max';
+                const maxSlider = document.createElement('input');
+                maxSlider.type = 'range';
+                maxSlider.min = '0';
+                maxSlider.max = '100';
+                maxSlider.value = String((ch.max || 1) * 100);
+                maxSlider.className = 'popup-slider';
+                const maxValue = document.createElement('span');
+                maxValue.className = 'popup-value';
+                maxValue.textContent = Math.round((ch.max || 1) * 100) + '%';
+                maxSlider.addEventListener('input', (e) => {
+                    const settings = [...model.get('_channel_settings')];
+                    settings[idx] = { ...settings[idx], max: parseInt(maxSlider.value) / 100 };
+                    model.set('_channel_settings', settings);
+                    model.save_changes();
+                    maxValue.textContent = maxSlider.value + '%';
+                });
+                maxRow.appendChild(maxLabel);
+                maxRow.appendChild(maxSlider);
+                maxRow.appendChild(maxValue);
+
+                popup.appendChild(popupHeader);
+                popup.appendChild(colorRow);
+                popup.appendChild(minRow);
+                popup.appendChild(maxRow);
+
+                chItem.appendChild(popup);
+
+                // Toggle popup on click (only on the chip itself, not the popup)
+                chItem.addEventListener('click', (e) => {
+                    if (e.target === toggle || popup.contains(e.target)) return;
+                    e.stopPropagation();
+                    // Close other popups
+                    wrapper.querySelectorAll('.channel-popup.open').forEach(p => {
+                        if (p !== popup) p.classList.remove('open');
+                    });
+                    popup.classList.toggle('open');
+                });
+
+                wrapper.appendChild(chItem);
+            });
+
+            return wrapper;
+        }
+
+        function rebuildDimControls() {
+            dimControls.innerHTML = '';
+
+            const dimT = model.get('dim_t') || 1;
+            const dimC = model.get('dim_c') || 1;
+            const dimZ = model.get('dim_z') || 1;
+            const scenes = model.get('scenes') || [];
+
+            // Only show controls if we have multi-dimensional data
+            const hasMultiDim = dimT > 1 || dimC > 1 || dimZ > 1 || scenes.length > 1;
+            dimControls.style.display = hasMultiDim ? 'flex' : 'none';
+
+            if (scenes.length > 1) {
+                dimControls.appendChild(createSceneSelector());
+            }
+            if (dimT > 1) {
+                dimControls.appendChild(createDimSlider('T', 'dim_t', 'current_t', dimT));
+            }
+            if (dimZ > 1) {
+                dimControls.appendChild(createDimSlider('Z', 'dim_z', 'current_z', dimZ));
+            }
+            // Channel controls (replaces C slider for composite view)
+            if (dimC > 1) {
+                dimControls.appendChild(createChannelControls());
+            }
+        }
+
+        rebuildDimControls();
+
         const statusBar = document.createElement('div');
         statusBar.className = 'status-bar';
 
@@ -478,14 +821,51 @@ class BioImageViewer(anywidget.AnyWidget):
         zoomStatus.className = 'status-item';
         zoomStatus.textContent = 'Zoom: 100%';
 
+        const dimStatus = document.createElement('span');
+        dimStatus.className = 'status-item dim-status';
+
+        function updateDimStatus() {
+            const dimT = model.get('dim_t') || 1;
+            const dimC = model.get('dim_c') || 1;
+            const dimZ = model.get('dim_z') || 1;
+            const hasMultiDim = dimT > 1 || dimZ > 1;
+
+            if (hasMultiDim) {
+                const parts = [];
+                if (dimT > 1) parts.push(`T:${model.get('current_t')}/${dimT}`);
+                if (dimZ > 1) parts.push(`Z:${model.get('current_z')}/${dimZ}`);
+                dimStatus.textContent = parts.join(' | ');
+            } else {
+                dimStatus.textContent = '';
+            }
+
+            // Show active channels count
+            if (dimC > 1) {
+                const settings = model.get('_channel_settings') || [];
+                const visible = settings.filter(ch => ch.visible !== false).length;
+                dimStatus.textContent += (dimStatus.textContent ? ' | ' : '') + `Ch:${visible}/${dimC}`;
+            }
+        }
+        updateDimStatus();
+
         statusBar.appendChild(toolStatus);
         statusBar.appendChild(posStatus);
         statusBar.appendChild(zoomStatus);
+        statusBar.appendChild(dimStatus);
 
         container.appendChild(toolbar);
         container.appendChild(canvasWrapper);
+        container.appendChild(dimControls);
         container.appendChild(statusBar);
         el.appendChild(container);
+
+        // Close channel popups when clicking on canvas or toolbar
+        canvasWrapper.addEventListener('click', () => {
+            dimControls.querySelectorAll('.channel-popup.open').forEach(p => p.classList.remove('open'));
+        });
+        toolbar.addEventListener('click', () => {
+            dimControls.querySelectorAll('.channel-popup.open').forEach(p => p.classList.remove('open'));
+        });
 
         let scale = 1;
         let translateX = 0;
@@ -1049,12 +1429,19 @@ class BioImageViewer(anywidget.AnyWidget):
         canvas.style.cursor = cursors[initMode] || 'default';
         toolStatus.textContent = 'Tool: ' + TOOL_NAMES[initMode];
 
+        let isInitialLoad = true;
+
         async function loadBaseImage() {
             const imageData = model.get('image_data');
             if (imageData) {
                 baseImage = await loadImage(imageData);
             }
-            resetView();
+            if (isInitialLoad) {
+                resetView();
+                isInitialLoad = false;
+            } else {
+                renderCanvas();
+            }
         }
 
         await loadBaseImage();
@@ -1085,6 +1472,18 @@ class BioImageViewer(anywidget.AnyWidget):
             canvas.style.cursor = cursors[mode] || 'default';
             toolStatus.textContent = 'Tool: ' + TOOL_NAMES[mode];
         });
+
+        // Dimension observers
+        model.on('change:dim_t', rebuildDimControls);
+        model.on('change:dim_c', rebuildDimControls);
+        model.on('change:_channel_settings', () => {
+            updateDimStatus();
+        });
+        model.on('change:dim_z', rebuildDimControls);
+        model.on('change:scenes', rebuildDimControls);
+        model.on('change:current_t', updateDimStatus);
+        model.on('change:current_c', updateDimStatus);
+        model.on('change:current_z', updateDimStatus);
 
         new ResizeObserver(() => renderCanvas()).observe(canvasWrapper);
     }
@@ -1365,6 +1764,179 @@ class BioImageViewer(anywidget.AnyWidget):
     .status-item {
         white-space: nowrap;
     }
+    .dim-status {
+        margin-left: auto;
+        font-weight: 500;
+    }
+    .dimension-controls {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        padding: 8px 12px;
+        background: #f4f4f4;
+        border-top: 1px solid #e0e0e0;
+    }
+    .dim-slider-wrapper {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+    .dim-label {
+        font-size: 12px;
+        font-weight: 600;
+        color: #555;
+        min-width: 16px;
+    }
+    .dim-slider {
+        width: 100px;
+        height: 4px;
+        border-radius: 2px;
+        -webkit-appearance: none;
+        background: #ddd;
+    }
+    .dim-slider::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        width: 14px;
+        height: 14px;
+        border-radius: 50%;
+        background: #0d6efd;
+        cursor: pointer;
+    }
+    .dim-slider::-moz-range-thumb {
+        width: 14px;
+        height: 14px;
+        border-radius: 50%;
+        background: #0d6efd;
+        cursor: pointer;
+        border: none;
+    }
+    .dim-value {
+        font-size: 11px;
+        color: #666;
+        min-width: 40px;
+    }
+    .scene-selector-wrapper {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+    .scene-select {
+        padding: 4px 8px;
+        font-size: 12px;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        background: white;
+        cursor: pointer;
+    }
+    .channel-controls {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding-left: 8px;
+        border-left: 1px solid #ddd;
+    }
+    .channel-chip {
+        position: relative;
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        padding: 4px 8px;
+        background: #f0f0f0;
+        border-radius: 4px;
+        cursor: pointer;
+        user-select: none;
+    }
+    .channel-chip:hover {
+        background: #e8e8e8;
+    }
+    .channel-toggle {
+        width: 14px;
+        height: 14px;
+        cursor: pointer;
+    }
+    .channel-dot {
+        width: 12px;
+        height: 12px;
+        border-radius: 2px;
+        border: 1px solid rgba(0,0,0,0.2);
+    }
+    .channel-name {
+        font-size: 11px;
+        color: #555;
+    }
+    .channel-popup {
+        position: absolute;
+        bottom: 100%;
+        left: 0;
+        margin-bottom: 4px;
+        min-width: 180px;
+        background: #fff;
+        border: 1px solid #ddd;
+        border-radius: 8px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        padding: 12px;
+        display: none;
+        z-index: 200;
+    }
+    .channel-popup.open {
+        display: block;
+    }
+    .popup-header {
+        font-size: 12px;
+        font-weight: 600;
+        color: #333;
+        margin-bottom: 12px;
+        padding-bottom: 8px;
+        border-bottom: 1px solid #eee;
+    }
+    .popup-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 8px;
+    }
+    .popup-row span:first-child {
+        font-size: 11px;
+        color: #666;
+        min-width: 35px;
+    }
+    .popup-color {
+        width: 28px;
+        height: 28px;
+        padding: 0;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        cursor: pointer;
+    }
+    .popup-slider {
+        flex: 1;
+        height: 4px;
+        -webkit-appearance: none;
+        background: #e0e0e0;
+        border-radius: 2px;
+    }
+    .popup-slider::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        width: 14px;
+        height: 14px;
+        border-radius: 50%;
+        background: #0d6efd;
+        cursor: pointer;
+    }
+    .popup-slider::-moz-range-thumb {
+        width: 14px;
+        height: 14px;
+        border-radius: 50%;
+        background: #0d6efd;
+        cursor: pointer;
+        border: none;
+    }
+    .popup-value {
+        font-size: 11px;
+        color: #666;
+        min-width: 32px;
+        text-align: right;
+    }
 
     @media (prefers-color-scheme: dark) {
         .bioimage-viewer {
@@ -1442,6 +2014,59 @@ class BioImageViewer(anywidget.AnyWidget):
         .adjustment-slider {
             background: linear-gradient(to right, #333 0%, #666 50%, #999 100%);
         }
+        .dimension-controls {
+            background: #252525;
+            border-color: #404040;
+        }
+        .dim-label {
+            color: #aaa;
+        }
+        .dim-slider {
+            background: #404040;
+        }
+        .dim-value {
+            color: #888;
+        }
+        .scene-select {
+            background: #333;
+            border-color: #555;
+            color: #eee;
+        }
+        .channel-controls {
+            border-color: #404040;
+        }
+        .channel-chip {
+            background: #3a3a3a;
+        }
+        .channel-chip:hover {
+            background: #444;
+        }
+        .channel-dot {
+            border-color: rgba(255,255,255,0.2);
+        }
+        .channel-name {
+            color: #bbb;
+        }
+        .channel-popup {
+            background: #2d2d2d;
+            border-color: #404040;
+        }
+        .popup-header {
+            color: #eee;
+            border-color: #404040;
+        }
+        .popup-row span:first-child {
+            color: #aaa;
+        }
+        .popup-color {
+            border-color: #555;
+        }
+        .popup-slider {
+            background: #404040;
+        }
+        .popup-value {
+            color: #aaa;
+        }
     }
     """
 
@@ -1459,6 +2084,29 @@ class BioImageViewer(anywidget.AnyWidget):
     # Image dimensions
     width = traitlets.Int(0).tag(sync=True)
     height = traitlets.Int(0).tag(sync=True)
+
+    # 5D dimension sizes (TCZYX)
+    dim_t = traitlets.Int(1).tag(sync=True)
+    dim_c = traitlets.Int(1).tag(sync=True)
+    dim_z = traitlets.Int(1).tag(sync=True)
+
+    # Current position in each dimension
+    current_t = traitlets.Int(0).tag(sync=True)
+    current_c = traitlets.Int(0).tag(sync=True)
+    current_z = traitlets.Int(0).tag(sync=True)
+
+    # Multi-resolution support
+    resolution_levels = traitlets.List(traitlets.Int()).tag(sync=True)
+    current_resolution = traitlets.Int(0).tag(sync=True)
+    _preview_mode = traitlets.Bool(False).tag(sync=True)  # True when actively scrubbing
+
+    # Scene support
+    scenes = traitlets.List(traitlets.Unicode()).tag(sync=True)
+    current_scene = traitlets.Unicode("").tag(sync=True)
+
+    # Channel settings for composite view: [{name, color, visible, min, max}]
+    # Colors are hex strings, min/max are 0-1 normalized contrast limits
+    _channel_settings = traitlets.List(traitlets.Dict()).tag(sync=True)
 
     # Tool mode
     tool_mode = traitlets.Unicode("pan").tag(sync=True)
@@ -1484,7 +2132,20 @@ class BioImageViewer(anywidget.AnyWidget):
     # SAM label deletion - set coordinates to delete SAM label at that position
     _delete_sam_at = traitlets.Dict(allow_none=True).tag(sync=True)
 
-    def set_image(self, data: np.ndarray):
+    def set_image(self, data):
+        """Set the base image from a numpy array or BioImage object.
+
+        Args:
+            data: Either a numpy array or a BioImage object.
+                  If BioImage, enables lazy loading for 5D data.
+        """
+        # Check if this is a BioImage object
+        if hasattr(data, "dims") and hasattr(data, "dask_data"):
+            self._set_bioimage(data)
+        else:
+            self._set_numpy_image(data)
+
+    def _set_numpy_image(self, data: np.ndarray):
         """Set the base image from a numpy array."""
         if data.ndim > 2:
             data = data.squeeze()
@@ -1497,7 +2158,259 @@ class BioImageViewer(anywidget.AnyWidget):
         # Store for SAM integration
         self._image_array = normalized
 
+        # Reset dimension info for simple arrays
+        self.dim_t = 1
+        self.dim_c = 1
+        self.dim_z = 1
+        self.current_t = 0
+        self.current_c = 0
+        self.current_z = 0
+        self.resolution_levels = []
+        self.scenes = []
+        self._channel_settings = []  # No channel controls for simple arrays
+        self._bioimage = None
+
         self.image_data = _array_to_base64(normalized)
+
+    def _set_bioimage(self, img):
+        """Set the base image from a BioImage object with lazy loading support.
+
+        Args:
+            img: A BioImage object from bioio
+        """
+        self._bioimage = img
+
+        # Extract dimension sizes (BioImage uses TCZYX order)
+        self.dim_t = img.dims.T
+        self.dim_c = img.dims.C
+        self.dim_z = img.dims.Z
+        self.height = img.dims.Y
+        self.width = img.dims.X
+
+        # Reset current positions
+        self.current_t = 0
+        self.current_c = 0
+        self.current_z = 0
+
+        # Initialize channel settings with default colors
+        channel_settings = []
+        for i in range(self.dim_c):
+            channel_settings.append({
+                "name": f"Channel {i}",
+                "color": CHANNEL_COLORS[i % len(CHANNEL_COLORS)],
+                "visible": True,
+                "min": 0.0,
+                "max": 1.0,
+            })
+        self._channel_settings = channel_settings
+
+        # Extract resolution levels if available
+        if hasattr(img, "resolution_levels") and img.resolution_levels:
+            self.resolution_levels = list(img.resolution_levels)
+            self.current_resolution = 0
+        else:
+            self.resolution_levels = []
+
+        # Extract scenes if available
+        if hasattr(img, "scenes") and img.scenes:
+            self.scenes = list(img.scenes)
+            self.current_scene = img.current_scene if hasattr(img, "current_scene") else ""
+        else:
+            self.scenes = []
+
+        # Load the initial slice
+        self._update_slice()
+
+    def _get_slice_cached(self, t: int, c: int, z: int) -> np.ndarray:
+        """Get slice data from cache or load from disk.
+
+        Uses an LRU-style cache to avoid repeated disk reads.
+        """
+        cache_key = (t, c, z)
+
+        if cache_key in self._slice_cache:
+            return self._slice_cache[cache_key]
+
+        # Load from disk
+        ch_data = self._bioimage.get_image_dask_data(
+            "YX", T=t, C=c, Z=z
+        ).compute()
+
+        # Evict oldest entries if cache is full
+        if len(self._slice_cache) >= self._slice_cache_max_size:
+            # Remove first (oldest) entry
+            oldest_key = next(iter(self._slice_cache))
+            del self._slice_cache[oldest_key]
+
+        self._slice_cache[cache_key] = ch_data
+        return ch_data
+
+    def _prefetch_slice(self, t: int, c: int, z: int) -> None:
+        """Prefetch a slice into the cache (called from background thread)."""
+        if self._bioimage is None:
+            return
+        cache_key = (t, c, z)
+        if cache_key in self._slice_cache:
+            return  # Already cached
+        try:
+            ch_data = self._bioimage.get_image_dask_data(
+                "YX", T=t, C=c, Z=z
+            ).compute()
+            if len(self._slice_cache) < self._slice_cache_max_size:
+                self._slice_cache[cache_key] = ch_data
+        except Exception:
+            pass  # Silently ignore prefetch errors
+
+    def _prefetch_adjacent_slices(self) -> None:
+        """Pre-fetch adjacent Z and T slices in background for smoother scrubbing."""
+        if self._bioimage is None:
+            return
+
+        t, z = self.current_t, self.current_z
+        dim_t, dim_z = self.dim_t, self.dim_z
+
+        # Determine which channels are visible
+        visible_channels = [
+            i for i, ch in enumerate(self._channel_settings)
+            if ch.get("visible", True)
+        ]
+
+        # Prefetch adjacent Z slices (z-1, z+1)
+        for dz in [-1, 1]:
+            nz = z + dz
+            if 0 <= nz < dim_z:
+                for c in visible_channels:
+                    self._prefetch_executor.submit(self._prefetch_slice, t, c, nz)
+
+        # Prefetch adjacent T slices (t-1, t+1)
+        for dt in [-1, 1]:
+            nt = t + dt
+            if 0 <= nt < dim_t:
+                for c in visible_channels:
+                    self._prefetch_executor.submit(self._prefetch_slice, nt, c, z)
+
+    def _update_slice(self):
+        """Update the displayed slice based on current T, Z positions and channel settings."""
+        if self._bioimage is None:
+            return
+
+        try:
+            # Get visible channels
+            visible_channels = []
+            colors = []
+            mins = []
+            maxs = []
+
+            # In preview mode, only use cached data (no disk I/O)
+            preview_mode = self._preview_mode
+
+            for i, ch_settings in enumerate(self._channel_settings):
+                if ch_settings.get("visible", True):
+                    cache_key = (self.current_t, i, self.current_z)
+                    if cache_key in self._slice_cache:
+                        # Use cached data
+                        ch_data = self._slice_cache[cache_key]
+                    elif preview_mode:
+                        # In preview mode, skip uncached channels (don't block on I/O)
+                        # Schedule background load instead
+                        self._prefetch_executor.submit(
+                            self._prefetch_slice, self.current_t, i, self.current_z
+                        )
+                        continue
+                    else:
+                        # Not in preview mode, load from disk
+                        ch_data = self._get_slice_cached(self.current_t, i, self.current_z)
+
+                    visible_channels.append(ch_data)
+                    colors.append(ch_settings.get("color", "#ffffff"))
+                    mins.append(ch_settings.get("min", 0.0))
+                    maxs.append(ch_settings.get("max", 1.0))
+
+            if not visible_channels:
+                # No visible channels (or all uncached in preview mode)
+                if not preview_mode:
+                    normalized = np.zeros((self.height, self.width), dtype=np.uint8)
+                    self._image_array = normalized
+                    self.image_data = _array_to_base64(normalized)
+                return
+
+            if len(visible_channels) == 1 and colors[0] == "#ffffff":
+                # Single grayscale channel - no compositing needed
+                normalized = _normalize_image(visible_channels[0])
+                # Apply contrast
+                vmin, vmax = mins[0], maxs[0]
+                if vmin > 0 or vmax < 1:
+                    normalized = normalized.astype(np.float64) / 255.0
+                    normalized = np.clip((normalized - vmin) / (vmax - vmin + 1e-10), 0, 1)
+                    normalized = (normalized * 255).astype(np.uint8)
+                self._image_array = normalized
+                self.image_data = _array_to_base64(normalized)
+            else:
+                # Composite multiple channels
+                composite = _composite_channels(visible_channels, colors, mins, maxs)
+                # Store grayscale version for SAM
+                self._image_array = np.mean(composite, axis=2).astype(np.uint8)
+                self.image_data = _array_to_base64(composite)
+
+            # Pre-fetch adjacent slices for smoother navigation (not in preview mode)
+            if not preview_mode:
+                self._prefetch_adjacent_slices()
+
+        except Exception as e:
+            print(f"Error updating slice: {e}")
+
+    def _on_dimension_change(self, change):
+        """Observer callback when T or Z dimension changes."""
+        if self._bioimage is not None:
+            self._update_slice()
+
+    def _on_channel_settings_change(self, change):
+        """Observer callback when channel settings change."""
+        if self._bioimage is not None:
+            self._update_slice()
+
+    def _on_resolution_change(self, change):
+        """Observer callback when resolution level changes."""
+        if self._bioimage is None:
+            return
+
+        new_level = change.get("new", 0)
+        if hasattr(self._bioimage, "set_resolution_level"):
+            try:
+                self._bioimage.set_resolution_level(new_level)
+                # Clear cache since resolution changed
+                self._slice_cache.clear()
+                # Update dimensions for new resolution
+                self.height = self._bioimage.dims.Y
+                self.width = self._bioimage.dims.X
+                self._update_slice()
+            except Exception as e:
+                print(f"Error changing resolution level: {e}")
+
+    def _on_scene_change(self, change):
+        """Observer callback when scene changes."""
+        if self._bioimage is None:
+            return
+
+        new_scene = change.get("new", "")
+        if new_scene and hasattr(self._bioimage, "set_scene"):
+            try:
+                self._bioimage.set_scene(new_scene)
+                # Clear cache since scene changed
+                self._slice_cache.clear()
+                # Update dimensions for new scene
+                self.dim_t = self._bioimage.dims.T
+                self.dim_c = self._bioimage.dims.C
+                self.dim_z = self._bioimage.dims.Z
+                self.height = self._bioimage.dims.Y
+                self.width = self._bioimage.dims.X
+                # Reset positions
+                self.current_t = 0
+                self.current_c = 0
+                self.current_z = 0
+                self._update_slice()
+            except Exception as e:
+                print(f"Error changing scene: {e}")
 
     def add_mask(
         self,

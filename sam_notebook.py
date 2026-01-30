@@ -23,11 +23,10 @@ def _(BioImage, bioio_tifffile):
 @app.cell
 def _(mo):
     # Create a file browser  
-    file_browser = mo.ui.file_browser(multiple=False,filetypes=[".tif", ".tiff"],label="Select a TIFF image",initial_path="/var/home/maartenpaul/Nextcloud2/LACDR_NL-Bioimaging (Projectfolder)/Maarten Paul/Projects/vanDijkBrechtje_PBMC_AI_classification/Experimental data/Brechje/")  
-  
+    file_browser = mo.ui.file_browser(multiple=False,filetypes=[".tif", ".tiff"],label="Select a TIFF image")  
+
     # Display it  
     file_browser  
-
     return (file_browser,)
 
 
