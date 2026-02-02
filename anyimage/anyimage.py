@@ -8,17 +8,30 @@ import pandas as pd
 import traitlets
 
 
-def _normalize_image(data: np.ndarray) -> np.ndarray:
-    """Normalize image data to uint8 range."""
-    if data.dtype == np.uint8:
+def _normalize_image(
+    data: np.ndarray,
+    global_min: float | None = None,
+    global_max: float | None = None,
+) -> np.ndarray:
+    """Normalize image data to uint8 range.
+
+    Args:
+        data: Input array to normalize
+        global_min: Optional global minimum value for consistent normalization
+        global_max: Optional global maximum value for consistent normalization
+    """
+    if data.dtype == np.uint8 and global_min is None and global_max is None:
         return data
     data = data.astype(np.float64)
-    data_min, data_max = data.min(), data.max()
+    if global_min is not None and global_max is not None:
+        data_min, data_max = global_min, global_max
+    else:
+        data_min, data_max = data.min(), data.max()
     if data_max > data_min:
         data = (data - data_min) / (data_max - data_min) * 255
     else:
         data = np.zeros_like(data)
-    return data.astype(np.uint8)
+    return np.clip(data, 0, 255).astype(np.uint8)
 
 
 def _array_to_base64(data: np.ndarray) -> str:
@@ -105,6 +118,8 @@ def _composite_channels(
     colors: list[str],
     mins: list[float],
     maxs: list[float],
+    data_mins: list[float] | None = None,
+    data_maxs: list[float] | None = None,
 ) -> np.ndarray:
     """Composite multiple channels into an RGB image.
 
@@ -113,6 +128,8 @@ def _composite_channels(
         colors: List of hex colors for each channel
         mins: List of min values (0-1) for contrast
         maxs: List of max values (0-1) for contrast
+        data_mins: List of global min values for each channel (for consistent normalization)
+        data_maxs: List of global max values for each channel (for consistent normalization)
 
     Returns:
         RGB image as uint8 array (H, W, 3)
@@ -121,12 +138,20 @@ def _composite_channels(
         return np.zeros((1, 1, 3), dtype=np.uint8)
 
     height, width = channels[0].shape
+    if height == 0 or width == 0:
+        return np.zeros((1, 1, 3), dtype=np.uint8)
+
     composite = np.zeros((height, width, 3), dtype=np.float64)
 
-    for ch_data, color, vmin, vmax in zip(channels, colors, mins, maxs):
-        # Normalize channel data to 0-1
+    for i, (ch_data, color, vmin, vmax) in enumerate(zip(channels, colors, mins, maxs)):
+        if ch_data.size == 0:
+            continue
+        # Normalize channel data to 0-1 using global min/max if provided
         ch_float = ch_data.astype(np.float64)
-        ch_min, ch_max = ch_float.min(), ch_float.max()
+        if data_mins is not None and data_maxs is not None and i < len(data_mins) and i < len(data_maxs):
+            ch_min, ch_max = data_mins[i], data_maxs[i]
+        else:
+            ch_min, ch_max = ch_float.min(), ch_float.max()
         if ch_max > ch_min:
             ch_norm = (ch_float - ch_min) / (ch_max - ch_min)
         else:
@@ -157,8 +182,10 @@ class BioImageViewer(anywidget.AnyWidget):
         self._mask_caches = {}  # Cache rendered versions by mask id
         self._bioimage = None  # Store BioImage reference for lazy loading
         self._slice_cache = {}  # LRU cache for slice data: (T, C, Z) -> np.ndarray
-        self._slice_cache_max_size = 64  # Max number of cached slices
-        self._prefetch_executor = ThreadPoolExecutor(max_workers=2)  # Background prefetching
+        self._slice_cache_max_size = 128  # Max number of cached slices
+        self._tile_cache = {}  # (t, z, tx, ty, res) -> base64 PNG
+        self._tile_cache_max_size = 2048  # Max cached tiles (~400MB for your dataset)
+        self._prefetch_executor = ThreadPoolExecutor(max_workers=4)  # Background prefetching
 
         # Observer for SAM label deletion
         self.observe(self._on_delete_sam_at, names=["_delete_sam_at"])
@@ -168,6 +195,9 @@ class BioImageViewer(anywidget.AnyWidget):
         self.observe(self._on_resolution_change, names=["current_resolution"])
         self.observe(self._on_scene_change, names=["current_scene"])
         self.observe(self._on_channel_settings_change, names=["_channel_settings"])
+
+        # Observer for tile-based loading
+        self.observe(self._on_tile_request, names=["_tile_request"])
 
     _esm = """
     async function loadImage(base64Data) {
@@ -195,6 +225,100 @@ class BioImageViewer(anywidget.AnyWidget):
     };
 
     async function render({ model, el }) {
+        const TILE_SIZE = model.get('_tile_size') || 256;
+        const tileCache = new Map();
+        const pendingTiles = new Set();
+        const MAX_CACHE_SIZE = 2048;
+        let useTileMode = false;
+
+        function getVisibleTiles(scale, translateX, translateY, canvasWidth, canvasHeight, imageWidth, imageHeight, t, z) {
+            const minX = Math.max(0, -translateX / scale);
+            const minY = Math.max(0, -translateY / scale);
+            const maxX = Math.min(imageWidth, (-translateX + canvasWidth) / scale);
+            const maxY = Math.min(imageHeight, (-translateY + canvasHeight) / scale);
+
+            const tiles = [];
+            const startTileX = Math.max(0, Math.floor(minX / TILE_SIZE));
+            const startTileY = Math.max(0, Math.floor(minY / TILE_SIZE));
+            const endTileX = Math.ceil(maxX / TILE_SIZE);
+            const endTileY = Math.ceil(maxY / TILE_SIZE);
+
+            for (let ty = startTileY; ty < endTileY; ty++) {
+                for (let tx = startTileX; tx < endTileX; tx++) {
+                    tiles.push({ tx, ty, key: `${t}_${z}_${tx}_${ty}` });
+                }
+            }
+            return tiles;
+        }
+
+        function cacheTile(key, img) {
+            if (tileCache.size >= MAX_CACHE_SIZE) {
+                let oldestKey = null;
+                let oldestTime = Infinity;
+                for (const [k, v] of tileCache) {
+                    if (v.lastAccess < oldestTime) {
+                        oldestTime = v.lastAccess;
+                        oldestKey = k;
+                    }
+                }
+                if (oldestKey) tileCache.delete(oldestKey);
+            }
+            tileCache.set(key, { img, lastAccess: Date.now() });
+        }
+
+        function requestTiles(tiles, t, z) {
+            const cached = tiles.filter(tile => tileCache.has(tile.key)).length;
+            const missing = tiles.filter(tile => !tileCache.has(tile.key) && !pendingTiles.has(tile.key));
+            if (missing.length === 0) {
+                if (cached > 0) console.log(`[JS] All ${cached} tiles from cache`);
+                return;
+            }
+
+            console.log(`[JS] Requesting ${missing.length} tiles (${cached} cached) for T=${t} Z=${z}`);
+            missing.forEach(tile => pendingTiles.add(tile.key));
+            model.set('_tile_request', {
+                tiles: missing.map(t => ({ tx: t.tx, ty: t.ty })),
+                t, z, timestamp: Date.now()
+            });
+            model.save_changes();
+        }
+
+        // Prefetch tiles for adjacent T/Z slices
+        function prefetchAdjacentTiles(visibleTiles, t, z) {
+            const dimT = model.get('dim_t') || 1;
+            const dimZ = model.get('dim_z') || 1;
+            const adjacentSlices = [];
+
+            // Adjacent T (t-1, t+1)
+            if (t > 0) adjacentSlices.push({ t: t - 1, z });
+            if (t < dimT - 1) adjacentSlices.push({ t: t + 1, z });
+            // Adjacent Z (z-1, z+1)
+            if (z > 0) adjacentSlices.push({ t, z: z - 1 });
+            if (z < dimZ - 1) adjacentSlices.push({ t, z: z + 1 });
+
+            for (const slice of adjacentSlices) {
+                const prefetchTiles = visibleTiles.map(tile => ({
+                    tx: tile.tx, ty: tile.ty,
+                    key: `${slice.t}_${slice.z}_${tile.tx}_${tile.ty}`
+                }));
+                const missing = prefetchTiles.filter(tile => !tileCache.has(tile.key) && !pendingTiles.has(tile.key));
+                if (missing.length > 0) {
+                    missing.forEach(tile => pendingTiles.add(tile.key));
+                    model.set('_tile_request', {
+                        tiles: missing.map(t => ({ tx: t.tx, ty: t.ty })),
+                        t: slice.t, z: slice.z, timestamp: Date.now(), prefetch: true
+                    });
+                    model.save_changes();
+                    break; // Only prefetch one slice at a time to avoid overload
+                }
+            }
+        }
+
+        function clearTileCache() {
+            tileCache.clear();
+            pendingTiles.clear();
+        }
+
         const container = document.createElement('div');
         container.className = 'bioimage-viewer';
         container.tabIndex = 0;
@@ -277,7 +401,7 @@ class BioImageViewer(anywidget.AnyWidget):
                     const url = URL.createObjectURL(blob);
                     const a = document.createElement('a');
                     a.href = url;
-                    a.download = `${mask.name.replace(/\s+/g, '_')}.png`;
+                    a.download = `${mask.name.replace(/\\s+/g, '_')}.png`;
                     document.body.appendChild(a);
                     a.click();
                     document.body.removeChild(a);
@@ -544,13 +668,41 @@ class BioImageViewer(anywidget.AnyWidget):
         const dimControls = document.createElement('div');
         dimControls.className = 'dimension-controls';
 
-        function createDimSlider(label, dimKey, currentKey, maxVal) {
+        // Play state for time series
+        let playInterval = null;
+        let playSpeed = 200; // ms per frame
+
+        function createDimSlider(label, dimKey, currentKey, maxVal, showPlayBtn = false) {
             const wrapper = document.createElement('div');
             wrapper.className = 'dim-slider-wrapper';
 
             const labelEl = document.createElement('span');
             labelEl.className = 'dim-label';
             labelEl.textContent = label;
+
+            // Play button for time series
+            let playBtn = null;
+            if (showPlayBtn && maxVal > 1) {
+                playBtn = document.createElement('button');
+                playBtn.className = 'play-btn';
+                playBtn.innerHTML = '\u25B6';
+                playBtn.title = 'Play/Pause';
+                playBtn.addEventListener('click', () => {
+                    if (playInterval) {
+                        clearInterval(playInterval);
+                        playInterval = null;
+                        playBtn.innerHTML = '\u25B6';
+                    } else {
+                        playBtn.innerHTML = '\u23F8';
+                        playInterval = setInterval(() => {
+                            let val = model.get(currentKey) + 1;
+                            if (val >= maxVal) val = 0;
+                            model.set(currentKey, val);
+                            model.save_changes();
+                        }, playSpeed);
+                    }
+                });
+            }
 
             const slider = document.createElement('input');
             slider.type = 'range';
@@ -570,20 +722,17 @@ class BioImageViewer(anywidget.AnyWidget):
                 const val = parseInt(slider.value);
                 valueEl.textContent = `${val}/${maxVal}`;
 
-                // Enter preview mode for quick low-res updates
                 if (!model.get('_preview_mode')) {
                     model.set('_preview_mode', true);
                     model.save_changes();
                 }
 
-                // Send preview update with small debounce
                 if (previewTimer) clearTimeout(previewTimer);
                 previewTimer = setTimeout(() => {
                     model.set(currentKey, val);
                     model.save_changes();
                 }, 30);
 
-                // After longer pause, exit preview mode for full-res
                 if (debounceTimer) clearTimeout(debounceTimer);
                 debounceTimer = setTimeout(() => {
                     model.set('_preview_mode', false);
@@ -598,6 +747,7 @@ class BioImageViewer(anywidget.AnyWidget):
             });
 
             wrapper.appendChild(labelEl);
+            if (playBtn) wrapper.appendChild(playBtn);
             wrapper.appendChild(slider);
             wrapper.appendChild(valueEl);
             return wrapper;
@@ -793,7 +943,7 @@ class BioImageViewer(anywidget.AnyWidget):
                 dimControls.appendChild(createSceneSelector());
             }
             if (dimT > 1) {
-                dimControls.appendChild(createDimSlider('T', 'dim_t', 'current_t', dimT));
+                dimControls.appendChild(createDimSlider('T', 'dim_t', 'current_t', dimT, true));
             }
             if (dimZ > 1) {
                 dimControls.appendChild(createDimSlider('Z', 'dim_z', 'current_z', dimZ));
@@ -1026,23 +1176,52 @@ class BioImageViewer(anywidget.AnyWidget):
             }
 
             ctx.save();
-            ctx.translate(translateX, translateY);
-            ctx.scale(scale, scale);
 
-            if (model.get('image_visible') && baseImage) {
-                const brightness = model.get('image_brightness') || 0;
-                const contrast = model.get('image_contrast') || 0;
-                
-                // Apply brightness and contrast filters
-                const brightnessPercent = (brightness * 100);
-                const contrastPercent = ((contrast + 1) * 100);
+            // Set up brightness/contrast filters once
+            const brightness = model.get('image_brightness') || 0;
+            const contrast = model.get('image_contrast') || 0;
+            const brightnessPercent = (brightness * 100);
+            const contrastPercent = ((contrast + 1) * 100);
+
+            if (model.get('image_visible')) {
                 ctx.filter = `brightness(${100 + brightnessPercent}%) contrast(${contrastPercent}%)`;
-                
-                ctx.drawImage(baseImage, 0, 0);
-                
-                // Reset filter
+
+                if (useTileMode) {
+                    const t = model.get('current_t'), z = model.get('current_z');
+                    const visibleTiles = getVisibleTiles(scale, translateX, translateY, canvas.width, canvas.height, imgWidth, imgHeight, t, z);
+                    requestTiles(visibleTiles, t, z);
+
+                    let allCached = true;
+                    for (const tile of visibleTiles) {
+                        const entry = tileCache.get(tile.key);
+                        if (entry) {
+                            entry.lastAccess = Date.now();
+                            const screenX = tile.tx * TILE_SIZE * scale + translateX;
+                            const screenY = tile.ty * TILE_SIZE * scale + translateY;
+                            ctx.drawImage(entry.img, screenX, screenY, TILE_SIZE * scale, TILE_SIZE * scale);
+                        } else {
+                            allCached = false;
+                        }
+                    }
+
+                    // Prefetch adjacent T/Z when current view is fully loaded
+                    if (allCached && visibleTiles.length > 0) {
+                        prefetchAdjacentTiles(visibleTiles, t, z);
+                    }
+                } else if (baseImage) {
+                    ctx.translate(translateX, translateY);
+                    ctx.scale(scale, scale);
+                    ctx.drawImage(baseImage, 0, 0);
+                    ctx.restore();
+                    ctx.save();
+                }
+
                 ctx.filter = 'none';
             }
+
+            // Apply transform for mask overlays and annotations
+            ctx.translate(translateX, translateY);
+            ctx.scale(scale, scale);
 
             // Draw mask overlays
             const masks = model.get('_masks_data') || [];
@@ -1259,6 +1438,20 @@ class BioImageViewer(anywidget.AnyWidget):
             translateY = mouseY - (mouseY - translateY) * (newScale / scale);
             scale = newScale;
 
+            // Auto-select resolution level based on zoom
+            const resLevels = model.get('resolution_levels') || [];
+            if (resLevels.length > 1) {
+                const optimalLevel = Math.max(0, Math.min(
+                    Math.floor(-Math.log2(scale)),
+                    resLevels.length - 1
+                ));
+                if (optimalLevel !== model.get('current_resolution')) {
+                    console.log(`[JS] Auto LOD: scale=${scale.toFixed(2)} -> level ${optimalLevel}`);
+                    model.set('current_resolution', optimalLevel);
+                    model.save_changes();
+                }
+            }
+
             renderCanvas();
         });
 
@@ -1431,11 +1624,20 @@ class BioImageViewer(anywidget.AnyWidget):
 
         let isInitialLoad = true;
 
+        function checkTileMode() {
+            const imageWidth = model.get('width');
+            const imageHeight = model.get('height');
+            useTileMode = (imageWidth * imageHeight) >= (1024 * 1024);  // 1MP+ uses tiles
+            console.log(`[JS] Tile mode: ${useTileMode} (${imageWidth}x${imageHeight})`);
+            if (useTileMode) clearTileCache();
+        }
+
         async function loadBaseImage() {
             const imageData = model.get('image_data');
             if (imageData) {
                 baseImage = await loadImage(imageData);
             }
+            checkTileMode();
             if (isInitialLoad) {
                 resetView();
                 isInitialLoad = false;
@@ -1461,8 +1663,8 @@ class BioImageViewer(anywidget.AnyWidget):
         model.on('change:roi_color', renderCanvas);
         model.on('change:polygon_color', renderCanvas);
         model.on('change:point_color', renderCanvas);
-        model.on('change:width', resetView);
-        model.on('change:height', resetView);
+        model.on('change:width', () => { checkTileMode(); resetView(); });
+        model.on('change:height', () => { checkTileMode(); resetView(); });
         model.on('change:tool_mode', () => {
             const mode = model.get('tool_mode');
             [panBtn, selectBtn, rectBtn, polygonBtn, pointBtn].forEach(btn => {
@@ -1477,13 +1679,51 @@ class BioImageViewer(anywidget.AnyWidget):
         model.on('change:dim_t', rebuildDimControls);
         model.on('change:dim_c', rebuildDimControls);
         model.on('change:_channel_settings', () => {
+            clearTileCache();  // Contrast/color changed
             updateDimStatus();
+            renderCanvas();
         });
         model.on('change:dim_z', rebuildDimControls);
         model.on('change:scenes', rebuildDimControls);
         model.on('change:current_t', updateDimStatus);
         model.on('change:current_c', updateDimStatus);
         model.on('change:current_z', updateDimStatus);
+
+        // Decode raw RGBA bytes to ImageBitmap (much faster than PNG)
+        async function decodeRawTile(tileData) {
+            const { w, h, data } = tileData;
+            const binary = atob(data);
+            const bytes = new Uint8ClampedArray(binary.length);
+            for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+            const imageData = new ImageData(bytes, w, h);
+            return await createImageBitmap(imageData);
+        }
+
+        model.on('change:_tiles_data', async () => {
+            const start = performance.now();
+            const tilesData = model.get('_tiles_data') || {};
+            const keys = Object.keys(tilesData);
+            let decoded = 0;
+            for (const [key, tileData] of Object.entries(tilesData)) {
+                if (tileData && !tileCache.has(key)) {
+                    try {
+                        const img = await decodeRawTile(tileData);
+                        cacheTile(key, img);
+                        pendingTiles.delete(key);
+                        decoded++;
+                    } catch (e) {
+                        console.error('Tile decode error:', e);
+                        pendingTiles.delete(key);
+                    }
+                }
+            }
+            console.log(`[JS] Decoded ${decoded} tiles in ${(performance.now() - start).toFixed(0)}ms`);
+            renderCanvas();
+        });
+
+        model.on('change:current_t', renderCanvas);
+        model.on('change:current_z', renderCanvas);
+        model.on('change:current_resolution', clearTileCache);
 
         new ResizeObserver(() => renderCanvas()).observe(canvasWrapper);
     }
@@ -1786,6 +2026,22 @@ class BioImageViewer(anywidget.AnyWidget):
         font-weight: 600;
         color: #555;
         min-width: 16px;
+    }
+    .play-btn {
+        width: 24px;
+        height: 24px;
+        border: none;
+        border-radius: 4px;
+        background: #0d6efd;
+        color: white;
+        cursor: pointer;
+        font-size: 10px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+    .play-btn:hover {
+        background: #0b5ed7;
     }
     .dim-slider {
         width: 100px;
@@ -2132,6 +2388,11 @@ class BioImageViewer(anywidget.AnyWidget):
     # SAM label deletion - set coordinates to delete SAM label at that position
     _delete_sam_at = traitlets.Dict(allow_none=True).tag(sync=True)
 
+    # Tile-based loading
+    _tile_size = traitlets.Int(256).tag(sync=True)
+    _tile_request = traitlets.Dict(allow_none=True).tag(sync=True)
+    _tiles_data = traitlets.Dict({}).tag(sync=True)
+
     def set_image(self, data):
         """Set the base image from a numpy array or BioImage object.
 
@@ -2192,15 +2453,22 @@ class BioImageViewer(anywidget.AnyWidget):
         self.current_c = 0
         self.current_z = 0
 
-        # Initialize channel settings with default colors
+        # Compute global min/max for each channel by sampling slices
+        # This ensures consistent normalization across all tiles, timeframes, and z-stacks
+        channel_ranges = self._compute_channel_ranges(img)
+
+        # Initialize channel settings with default colors and global ranges
         channel_settings = []
         for i in range(self.dim_c):
+            data_min, data_max = channel_ranges.get(i, (0.0, 1.0))
             channel_settings.append({
                 "name": f"Channel {i}",
                 "color": CHANNEL_COLORS[i % len(CHANNEL_COLORS)],
                 "visible": True,
                 "min": 0.0,
                 "max": 1.0,
+                "data_min": float(data_min),
+                "data_max": float(data_max),
             })
         self._channel_settings = channel_settings
 
@@ -2218,48 +2486,157 @@ class BioImageViewer(anywidget.AnyWidget):
         else:
             self.scenes = []
 
-        # Load the initial slice
         self._update_slice()
 
-    def _get_slice_cached(self, t: int, c: int, z: int) -> np.ndarray:
-        """Get slice data from cache or load from disk.
+    def _compute_channel_ranges(self, img) -> dict[int, tuple[float, float]]:
+        """Compute global min/max ranges for each channel by sampling slices.
 
-        Uses an LRU-style cache to avoid repeated disk reads.
+        Samples slices across T and Z dimensions to estimate the global data range
+        for consistent normalization across all tiles, timeframes, and z-stacks.
+
+        Returns:
+            Dictionary mapping channel index to (min, max) tuple
         """
-        cache_key = (t, c, z)
+        channel_ranges = {}
 
+        # Sample strategy: sample first, middle, and last T/Z positions
+        t_samples = list(set([0, self.dim_t // 2, self.dim_t - 1]))
+        z_samples = list(set([0, self.dim_z // 2, self.dim_z - 1]))
+
+        for c in range(self.dim_c):
+            global_min = float("inf")
+            global_max = float("-inf")
+
+            for t in t_samples:
+                for z in z_samples:
+                    try:
+                        slice_data = img.get_image_dask_data("YX", T=t, C=c, Z=z).compute()
+                        slice_min = float(slice_data.min())
+                        slice_max = float(slice_data.max())
+                        global_min = min(global_min, slice_min)
+                        global_max = max(global_max, slice_max)
+                    except Exception:
+                        continue
+
+            # Fallback if no valid samples
+            if global_min == float("inf") or global_max == float("-inf"):
+                global_min, global_max = 0.0, 1.0
+
+            channel_ranges[c] = (global_min, global_max)
+
+        return channel_ranges
+
+    def _get_slice_cached(self, t: int, c: int, z: int) -> np.ndarray:
+        """Get slice data from cache or load from disk."""
+        cache_key = (t, c, z)
         if cache_key in self._slice_cache:
             return self._slice_cache[cache_key]
 
-        # Load from disk
-        ch_data = self._bioimage.get_image_dask_data(
-            "YX", T=t, C=c, Z=z
-        ).compute()
+        ch_data = self._bioimage.get_image_dask_data("YX", T=t, C=c, Z=z).compute()
 
-        # Evict oldest entries if cache is full
         if len(self._slice_cache) >= self._slice_cache_max_size:
-            # Remove first (oldest) entry
-            oldest_key = next(iter(self._slice_cache))
-            del self._slice_cache[oldest_key]
+            del self._slice_cache[next(iter(self._slice_cache))]
 
         self._slice_cache[cache_key] = ch_data
         return ch_data
 
+    def _get_tile(self, t: int, z: int, tile_x: int, tile_y: int):
+        """Get a single tile as raw RGBA bytes (much faster than PNG)."""
+        cache_key = (t, z, tile_x, tile_y, self.current_resolution)
+        if cache_key in self._tile_cache:
+            return self._tile_cache[cache_key]
+
+        y_start = tile_y * self._tile_size
+        x_start = tile_x * self._tile_size
+        if y_start >= self.height or x_start >= self.width:
+            return None
+
+        y_end = min(y_start + self._tile_size, self.height)
+        x_end = min(x_start + self._tile_size, self.width)
+
+        visible_channels, colors, mins, maxs, data_mins, data_maxs = [], [], [], [], [], []
+        for i, ch_settings in enumerate(self._channel_settings):
+            if ch_settings.get("visible", True):
+                ch_data = self._get_slice_cached(t, i, z)
+                if ch_data is None:
+                    continue
+                tile_slice = ch_data[y_start:y_end, x_start:x_end]
+                if tile_slice.size == 0:
+                    continue
+                visible_channels.append(tile_slice)
+                colors.append(ch_settings.get("color", "#ffffff"))
+                mins.append(ch_settings.get("min", 0.0))
+                maxs.append(ch_settings.get("max", 1.0))
+                data_mins.append(ch_settings.get("data_min"))
+                data_maxs.append(ch_settings.get("data_max"))
+
+        if not visible_channels:
+            return None
+
+        composite = _composite_channels(visible_channels, colors, mins, maxs, data_mins, data_maxs)
+        h, w = composite.shape[:2]
+
+        # Convert RGB to RGBA (add alpha channel)
+        rgba = np.zeros((h, w, 4), dtype=np.uint8)
+        rgba[:, :, :3] = composite
+        rgba[:, :, 3] = 255
+
+        # Raw bytes are ~10x faster than PNG encoding
+        tile_data = {
+            "w": w, "h": h,
+            "data": base64.b64encode(rgba.tobytes()).decode("utf-8")
+        }
+
+        if len(self._tile_cache) >= self._tile_cache_max_size:
+            del self._tile_cache[next(iter(self._tile_cache))]
+        self._tile_cache[cache_key] = tile_data
+
+        return tile_data
+
+    def _on_tile_request(self, change):
+        """Handle tile request from JavaScript."""
+        import time
+        start_total = time.perf_counter()
+
+        request = change.get("new")
+        if not request or self._bioimage is None:
+            return
+
+        t = request.get("t", self.current_t)
+        z = request.get("z", self.current_z)
+        tiles_data = {}
+        num_cached, num_generated = 0, 0
+
+        for tile_info in request.get("tiles", []):
+            tx, ty = tile_info.get("tx"), tile_info.get("ty")
+            if tx is not None and ty is not None:
+                cache_key = (t, z, tx, ty, self.current_resolution)
+                was_cached = cache_key in self._tile_cache
+                tile_data = self._get_tile(t, z, tx, ty)
+                if tile_data:
+                    tiles_data[f"{t}_{z}_{tx}_{ty}"] = tile_data
+                    if was_cached:
+                        num_cached += 1
+                    else:
+                        num_generated += 1
+
+        elapsed = (time.perf_counter() - start_total) * 1000
+        print(f"[Py] {num_generated} new + {num_cached} cached tiles in {elapsed:.0f}ms")
+        self._tiles_data = tiles_data
+
     def _prefetch_slice(self, t: int, c: int, z: int) -> None:
-        """Prefetch a slice into the cache (called from background thread)."""
+        """Prefetch a slice into the cache (background thread)."""
         if self._bioimage is None:
             return
         cache_key = (t, c, z)
         if cache_key in self._slice_cache:
-            return  # Already cached
+            return
         try:
-            ch_data = self._bioimage.get_image_dask_data(
-                "YX", T=t, C=c, Z=z
-            ).compute()
+            ch_data = self._bioimage.get_image_dask_data("YX", T=t, C=c, Z=z).compute()
             if len(self._slice_cache) < self._slice_cache_max_size:
                 self._slice_cache[cache_key] = ch_data
         except Exception:
-            pass  # Silently ignore prefetch errors
+            pass
 
     def _prefetch_adjacent_slices(self) -> None:
         """Pre-fetch adjacent Z and T slices in background for smoother scrubbing."""
@@ -2267,27 +2644,15 @@ class BioImageViewer(anywidget.AnyWidget):
             return
 
         t, z = self.current_t, self.current_z
-        dim_t, dim_z = self.dim_t, self.dim_z
+        visible_channels = [i for i, ch in enumerate(self._channel_settings) if ch.get("visible", True)]
 
-        # Determine which channels are visible
-        visible_channels = [
-            i for i, ch in enumerate(self._channel_settings)
-            if ch.get("visible", True)
-        ]
-
-        # Prefetch adjacent Z slices (z-1, z+1)
-        for dz in [-1, 1]:
-            nz = z + dz
-            if 0 <= nz < dim_z:
+        for delta in [-1, 1]:
+            if 0 <= z + delta < self.dim_z:
                 for c in visible_channels:
-                    self._prefetch_executor.submit(self._prefetch_slice, t, c, nz)
-
-        # Prefetch adjacent T slices (t-1, t+1)
-        for dt in [-1, 1]:
-            nt = t + dt
-            if 0 <= nt < dim_t:
+                    self._prefetch_executor.submit(self._prefetch_slice, t, c, z + delta)
+            if 0 <= t + delta < self.dim_t:
                 for c in visible_channels:
-                    self._prefetch_executor.submit(self._prefetch_slice, nt, c, z)
+                    self._prefetch_executor.submit(self._prefetch_slice, t + delta, c, z)
 
     def _update_slice(self):
         """Update the displayed slice based on current T, Z positions and channel settings."""
@@ -2300,6 +2665,8 @@ class BioImageViewer(anywidget.AnyWidget):
             colors = []
             mins = []
             maxs = []
+            data_mins = []
+            data_maxs = []
 
             # In preview mode, only use cached data (no disk I/O)
             preview_mode = self._preview_mode
@@ -2325,6 +2692,8 @@ class BioImageViewer(anywidget.AnyWidget):
                     colors.append(ch_settings.get("color", "#ffffff"))
                     mins.append(ch_settings.get("min", 0.0))
                     maxs.append(ch_settings.get("max", 1.0))
+                    data_mins.append(ch_settings.get("data_min"))
+                    data_maxs.append(ch_settings.get("data_max"))
 
             if not visible_channels:
                 # No visible channels (or all uncached in preview mode)
@@ -2336,7 +2705,9 @@ class BioImageViewer(anywidget.AnyWidget):
 
             if len(visible_channels) == 1 and colors[0] == "#ffffff":
                 # Single grayscale channel - no compositing needed
-                normalized = _normalize_image(visible_channels[0])
+                global_min = data_mins[0] if data_mins and data_mins[0] is not None else None
+                global_max = data_maxs[0] if data_maxs and data_maxs[0] is not None else None
+                normalized = _normalize_image(visible_channels[0], global_min, global_max)
                 # Apply contrast
                 vmin, vmax = mins[0], maxs[0]
                 if vmin > 0 or vmax < 1:
@@ -2347,7 +2718,7 @@ class BioImageViewer(anywidget.AnyWidget):
                 self.image_data = _array_to_base64(normalized)
             else:
                 # Composite multiple channels
-                composite = _composite_channels(visible_channels, colors, mins, maxs)
+                composite = _composite_channels(visible_channels, colors, mins, maxs, data_mins, data_maxs)
                 # Store grayscale version for SAM
                 self._image_array = np.mean(composite, axis=2).astype(np.uint8)
                 self.image_data = _array_to_base64(composite)
@@ -2366,6 +2737,7 @@ class BioImageViewer(anywidget.AnyWidget):
 
     def _on_channel_settings_change(self, change):
         """Observer callback when channel settings change."""
+        self._tile_cache.clear()  # Contrast/color changed, invalidate tiles
         if self._bioimage is not None:
             self._update_slice()
 
@@ -2380,6 +2752,7 @@ class BioImageViewer(anywidget.AnyWidget):
                 self._bioimage.set_resolution_level(new_level)
                 # Clear cache since resolution changed
                 self._slice_cache.clear()
+                self._tile_cache.clear()
                 # Update dimensions for new resolution
                 self.height = self._bioimage.dims.Y
                 self.width = self._bioimage.dims.X
@@ -2398,6 +2771,7 @@ class BioImageViewer(anywidget.AnyWidget):
                 self._bioimage.set_scene(new_scene)
                 # Clear cache since scene changed
                 self._slice_cache.clear()
+                self._tile_cache.clear()
                 # Update dimensions for new scene
                 self.dim_t = self._bioimage.dims.T
                 self.dim_c = self._bioimage.dims.C

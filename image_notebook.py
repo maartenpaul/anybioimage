@@ -12,18 +12,20 @@ def _():
     import bioio_tifffile
     import bioio_ome_zarr
     from anyimage import BioImageViewer
-    return BioImage, BioImageViewer, bioio_tifffile, mo, pd
+    return BioImage, BioImageViewer, bioio_ome_zarr, mo, pd
 
 
 @app.cell
-def _(BioImage, bioio_tifffile):
+def _(BioImage, bioio_ome_zarr):
     #img = BioImage("fluocell.tif", reader=bioio_tifffile.Reader)
-    img = BioImage("fluocell.tif", reader=bioio_tifffile.Reader)
+    #img = BioImage("fluocell.tif", reader=bioio_tifffile.Reader)
 
     #img = BioImage("image.tif", reader=bioio_tifffile.Reader)
-    #img = BioImage("image.zarr", reader=bioio_ome_zarr.Reader)
+    img = BioImage("image.zarr", reader=bioio_ome_zarr.Reader)
 
     #mask = BioImage("mask.tif", reader=bioio_tifffile.Reader)
+
+    img.shape
     return (img,)
 
 
