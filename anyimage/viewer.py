@@ -84,6 +84,9 @@ class BioImageViewer(
     # SAM label deletion - set coordinates to delete SAM label at that position
     _delete_sam_at = traitlets.Dict(allow_none=True).tag(sync=True)
 
+    # Viewer layout
+    canvas_height = traitlets.Int(800).tag(sync=True)
+
     # Tile-based loading
     _tile_size = traitlets.Int(256).tag(sync=True)
     _tile_request = traitlets.Dict(allow_none=True).tag(sync=True)
@@ -570,6 +573,7 @@ class BioImageViewer(
 
         const canvasWrapper = document.createElement('div');
         canvasWrapper.className = 'canvas-wrapper';
+        canvasWrapper.style.height = (model.get('canvas_height') || 800) + 'px';
 
         const canvas = document.createElement('canvas');
         canvas.className = 'viewer-canvas';
@@ -1076,6 +1080,8 @@ class BioImageViewer(
             canvas.width = canvasWrapper.clientWidth || imgWidth;
             canvas.height = canvasWrapper.clientHeight || imgHeight;
 
+            ctx.imageSmoothingEnabled = scale <= 1;
+
             const checkSize = 10;
             ctx.fillStyle = '#2a2a2a';
             ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -1109,9 +1115,11 @@ class BioImageViewer(
                         const entry = tileCache.get(tile.key);
                         if (entry) {
                             entry.lastAccess = Date.now();
-                            const screenX = tile.tx * TILE_SIZE * scale + translateX;
-                            const screenY = tile.ty * TILE_SIZE * scale + translateY;
-                            ctx.drawImage(entry.img, screenX, screenY, TILE_SIZE * scale, TILE_SIZE * scale);
+                            const screenX = Math.round(tile.tx * TILE_SIZE * scale + translateX);
+                            const screenY = Math.round(tile.ty * TILE_SIZE * scale + translateY);
+                            const drawW = Math.ceil(entry.img.width * scale);
+                            const drawH = Math.ceil(entry.img.height * scale);
+                            ctx.drawImage(entry.img, screenX, screenY, drawW, drawH);
                         } else {
                             allCached = false;
                         }
@@ -1578,6 +1586,10 @@ class BioImageViewer(
         model.on('change:point_color', renderCanvas);
         model.on('change:width', () => { checkTileMode(); resetView(); });
         model.on('change:height', () => { checkTileMode(); resetView(); });
+        model.on('change:canvas_height', () => {
+            canvasWrapper.style.height = (model.get('canvas_height') || 800) + 'px';
+            renderCanvas();
+        });
         model.on('change:tool_mode', () => {
             const mode = model.get('tool_mode');
             [panBtn, selectBtn, rectBtn, polygonBtn, pointBtn].forEach(btn => {
@@ -1899,7 +1911,7 @@ class BioImageViewer(
     .canvas-wrapper {
         position: relative;
         width: 100%;
-        height: 500px;
+        height: 800px;
         overflow: hidden;
     }
     .viewer-canvas {

@@ -104,9 +104,7 @@ class MaskManagementMixin:
             contours_only: If True, show only contours
             contour_width: Width of contours in pixels
         """
-        self._masks_data = []
-        self._mask_arrays = {}
-        self._mask_caches = {}
+        self.clear_masks()
         self.add_mask(labels, name=name or "Mask", contours_only=contours_only, contour_width=contour_width)
 
     def remove_mask(self, mask_id: str):
@@ -116,10 +114,8 @@ class MaskManagementMixin:
             mask_id: The ID of the mask to remove
         """
         self._masks_data = [m for m in self._masks_data if m["id"] != mask_id]
-        if mask_id in self._mask_arrays:
-            del self._mask_arrays[mask_id]
-        if mask_id in self._mask_caches:
-            del self._mask_caches[mask_id]
+        self._mask_arrays.pop(mask_id, None)
+        self._mask_caches.pop(mask_id, None)
 
     def clear_masks(self):
         """Remove all mask layers."""

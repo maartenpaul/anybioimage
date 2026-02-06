@@ -26,10 +26,14 @@ CHANNEL_COLORS = [
 ]
 
 
-def _hex_to_rgb(hex_color: str) -> tuple:
+def hex_to_rgb(hex_color: str) -> tuple[int, int, int]:
     """Convert hex color to RGB tuple (0-255).
 
-    Internal helper function.
+    Args:
+        hex_color: Hex color string (e.g., "#ff0000" or "ff0000")
+
+    Returns:
+        Tuple of (R, G, B) values in range 0-255
     """
     hex_color = hex_color.lstrip("#")
     return tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
@@ -135,18 +139,6 @@ def labels_to_rgba(
     return rgba
 
 
-def hex_to_rgb(hex_color: str) -> tuple:
-    """Convert hex color to RGB tuple (0-255).
-
-    Args:
-        hex_color: Hex color string (e.g., "#ff0000" or "ff0000")
-
-    Returns:
-        Tuple of (R, G, B) values in range 0-255
-    """
-    return _hex_to_rgb(hex_color)
-
-
 def composite_channels(
     channels: list[np.ndarray],
     colors: list[str],
@@ -195,7 +187,7 @@ def composite_channels(
         ch_norm = np.clip((ch_norm - vmin) / (vmax - vmin + 1e-10), 0, 1)
 
         # Get RGB color
-        r, g, b = _hex_to_rgb(color)
+        r, g, b = hex_to_rgb(color)
 
         # Additive blending
         composite[:, :, 0] += ch_norm * r

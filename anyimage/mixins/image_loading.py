@@ -1,6 +1,7 @@
 """Image loading mixin for BioImageViewer."""
 
 import base64
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
@@ -274,7 +275,6 @@ class ImageLoadingMixin:
         Args:
             change: Traitlet change dict with 'new' containing the tile request
         """
-        import time
         start_total = time.perf_counter()
 
         request = change.get("new")
@@ -416,73 +416,50 @@ class ImageLoadingMixin:
             print(f"Error updating slice: {e}")
 
     def _on_dimension_change(self, change):
-        """Observer callback when T or Z dimension changes.
-
-        Args:
-            change: Traitlet change dict
-        """
-        if self._bioimage is not None:
-            self._update_slice()
+        """Observer callback when T or Z dimension changes."""
+        self._update_slice()
 
     def _on_channel_settings_change(self, change):
-        """Observer callback when channel settings change.
+        """Observer callback when channel settings change."""
+        self._tile_cache.clear()
+        self._update_slice()
 
-        Args:
-            change: Traitlet change dict
-        """
-        self._tile_cache.clear()  # Contrast/color changed, invalidate tiles
-        if self._bioimage is not None:
-            self._update_slice()
+    def _clear_caches(self):
+        """Clear both slice and tile caches."""
+        self._slice_cache.clear()
+        self._tile_cache.clear()
 
     def _on_resolution_change(self, change):
-        """Observer callback when resolution level changes.
-
-        Args:
-            change: Traitlet change dict
-        """
-        if self._bioimage is None:
+        """Observer callback when resolution level changes."""
+        if self._bioimage is None or not hasattr(self._bioimage, "set_resolution_level"):
             return
 
-        new_level = change.get("new", 0)
-        if hasattr(self._bioimage, "set_resolution_level"):
-            try:
-                self._bioimage.set_resolution_level(new_level)
-                # Clear cache since resolution changed
-                self._slice_cache.clear()
-                self._tile_cache.clear()
-                # Update dimensions for new resolution
-                self.height = self._bioimage.dims.Y
-                self.width = self._bioimage.dims.X
-                self._update_slice()
-            except Exception as e:
-                print(f"Error changing resolution level: {e}")
+        try:
+            self._bioimage.set_resolution_level(change.get("new", 0))
+            self._clear_caches()
+            self.height = self._bioimage.dims.Y
+            self.width = self._bioimage.dims.X
+            self._update_slice()
+        except Exception as e:
+            print(f"Error changing resolution level: {e}")
 
     def _on_scene_change(self, change):
-        """Observer callback when scene changes.
-
-        Args:
-            change: Traitlet change dict
-        """
-        if self._bioimage is None:
+        """Observer callback when scene changes."""
+        new_scene = change.get("new", "")
+        if self._bioimage is None or not new_scene or not hasattr(self._bioimage, "set_scene"):
             return
 
-        new_scene = change.get("new", "")
-        if new_scene and hasattr(self._bioimage, "set_scene"):
-            try:
-                self._bioimage.set_scene(new_scene)
-                # Clear cache since scene changed
-                self._slice_cache.clear()
-                self._tile_cache.clear()
-                # Update dimensions for new scene
-                self.dim_t = self._bioimage.dims.T
-                self.dim_c = self._bioimage.dims.C
-                self.dim_z = self._bioimage.dims.Z
-                self.height = self._bioimage.dims.Y
-                self.width = self._bioimage.dims.X
-                # Reset positions
-                self.current_t = 0
-                self.current_c = 0
-                self.current_z = 0
-                self._update_slice()
-            except Exception as e:
-                print(f"Error changing scene: {e}")
+        try:
+            self._bioimage.set_scene(new_scene)
+            self._clear_caches()
+            self.dim_t = self._bioimage.dims.T
+            self.dim_c = self._bioimage.dims.C
+            self.dim_z = self._bioimage.dims.Z
+            self.height = self._bioimage.dims.Y
+            self.width = self._bioimage.dims.X
+            self.current_t = 0
+            self.current_c = 0
+            self.current_z = 0
+            self._update_slice()
+        except Exception as e:
+            print(f"Error changing scene: {e}")

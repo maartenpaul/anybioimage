@@ -191,71 +191,68 @@ class SAMIntegrationMixin:
                 self._processed_point_ids.add(point_id)
                 self._run_sam_on_point(point)
 
+    def _prepare_sam_image(self) -> np.ndarray | None:
+        """Prepare image array for SAM prediction.
+
+        Returns:
+            RGB numpy array ready for SAM, or None if not available
+        """
+        if not hasattr(self, "_sam_model") or self._sam_model is None:
+            return None
+        if not hasattr(self, "_image_array") or self._image_array is None:
+            return None
+
+        image = np.ascontiguousarray(self._image_array).copy()
+        if image.ndim == 2:
+            image = np.stack([image, image, image], axis=-1)
+        return image
+
+    def _add_sam_mask(self, mask_data: np.ndarray):
+        """Add a new SAM mask to the labels array and update the mask layer.
+
+        Args:
+            mask_data: Binary mask array from SAM prediction
+        """
+        self._sam_label_counter += 1
+
+        if self._sam_labels_array is None:
+            self._sam_labels_array = np.zeros((self.height, self.width), dtype=np.uint16)
+
+        new_mask_region = mask_data & (self._sam_labels_array == 0)
+        self._sam_labels_array[new_mask_region] = self._sam_label_counter
+
+        if self._sam_mask_id is None:
+            self._sam_mask_id = self.add_mask(
+                self._sam_labels_array,
+                name="SAM Masks",
+                opacity=0.5,
+                contours_only=False,
+            )
+        else:
+            self._update_sam_mask_layer()
+
     def _run_sam_on_roi(self, roi: dict):
         """Run SAM segmentation on a bounding box ROI.
 
         Args:
             roi: ROI dict with keys: id, x, y, width, height
         """
-        if not hasattr(self, "_sam_model") or self._sam_model is None:
+        image = self._prepare_sam_image()
+        if image is None:
             return
 
-        if not hasattr(self, "_image_array") or self._image_array is None:
-            return
-
-        # Convert ROI to bounding box format [x1, y1, x2, y2]
         x1 = int(roi["x"])
         y1 = int(roi["y"])
         x2 = int(roi["x"] + roi["width"])
         y2 = int(roi["y"] + roi["height"])
 
         try:
-            # Ensure array is contiguous (fixes negative stride error)
-            image = np.ascontiguousarray(self._image_array).copy()
-
-            # Convert grayscale to RGB if needed (SAM expects RGB)
-            if image.ndim == 2:
-                image = np.stack([image, image, image], axis=-1)
-
-            # Run SAM prediction
-            results = self._sam_model.predict(
-                image,
-                bboxes=[[x1, y1, x2, y2]],
-                verbose=False
-            )
+            results = self._sam_model.predict(image, bboxes=[[x1, y1, x2, y2]], verbose=False)
 
             if results and len(results) > 0 and results[0].masks is not None:
-                # Get the binary mask
                 mask_data = results[0].masks.data[0].cpu().numpy().astype(bool)
-
-                # Increment label counter for unique color
-                self._sam_label_counter += 1
-
-                # Initialize or update the combined labels array
-                if self._sam_labels_array is None:
-                    self._sam_labels_array = np.zeros(
-                        (self.height, self.width), dtype=np.uint16
-                    )
-
-                # Add new mask with unique label (don't overwrite existing labels)
-                new_mask_region = mask_data & (self._sam_labels_array == 0)
-                self._sam_labels_array[new_mask_region] = self._sam_label_counter
-
-                # Update or create the SAM mask layer
-                if self._sam_mask_id is None:
-                    self._sam_mask_id = self.add_mask(
-                        self._sam_labels_array,
-                        name="SAM Masks",
-                        opacity=0.5,
-                        contours_only=False
-                    )
-                else:
-                    # Update existing mask layer
-                    self._update_sam_mask_layer()
-
-                # Remove the ROI after processing
+                self._add_sam_mask(mask_data)
                 self._rois_data = [r for r in self._rois_data if r["id"] != roi["id"]]
-
         except Exception as e:
             print(f"SAM prediction failed: {e}")
 
@@ -265,62 +262,20 @@ class SAMIntegrationMixin:
         Args:
             point: Point dict with keys: id, x, y
         """
-        if not hasattr(self, "_sam_model") or self._sam_model is None:
-            return
-
-        if not hasattr(self, "_image_array") or self._image_array is None:
+        image = self._prepare_sam_image()
+        if image is None:
             return
 
         x = int(point["x"])
         y = int(point["y"])
 
         try:
-            # Ensure array is contiguous
-            image = np.ascontiguousarray(self._image_array).copy()
-
-            # Convert grayscale to RGB if needed
-            if image.ndim == 2:
-                image = np.stack([image, image, image], axis=-1)
-
-            # Run SAM prediction with point prompt (label=1 means foreground)
-            results = self._sam_model.predict(
-                image,
-                points=[[x, y]],
-                labels=[1],
-                verbose=False
-            )
+            results = self._sam_model.predict(image, points=[[x, y]], labels=[1], verbose=False)
 
             if results and len(results) > 0 and results[0].masks is not None:
-                # Get the binary mask
                 mask_data = results[0].masks.data[0].cpu().numpy().astype(bool)
-
-                # Increment label counter for unique color
-                self._sam_label_counter += 1
-
-                # Initialize or update the combined labels array
-                if self._sam_labels_array is None:
-                    self._sam_labels_array = np.zeros(
-                        (self.height, self.width), dtype=np.uint16
-                    )
-
-                # Add new mask with unique label
-                new_mask_region = mask_data & (self._sam_labels_array == 0)
-                self._sam_labels_array[new_mask_region] = self._sam_label_counter
-
-                # Update or create the SAM mask layer
-                if self._sam_mask_id is None:
-                    self._sam_mask_id = self.add_mask(
-                        self._sam_labels_array,
-                        name="SAM Masks",
-                        opacity=0.5,
-                        contours_only=False
-                    )
-                else:
-                    self._update_sam_mask_layer()
-
-                # Remove the point after processing
+                self._add_sam_mask(mask_data)
                 self._points_data = [p for p in self._points_data if p["id"] != point["id"]]
-
         except Exception as e:
             print(f"SAM point prediction failed: {e}")
 

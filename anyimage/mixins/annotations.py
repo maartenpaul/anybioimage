@@ -101,8 +101,8 @@ class AnnotationsMixin:
 
     def clear_all_annotations(self):
         """Clear all annotations (ROIs, polygons, and points)."""
-        self._rois_data = []
-        self._polygons_data = []
-        self._points_data = []
+        self.clear_rois()
+        self.clear_polygons()
+        self.clear_points()
         self.selected_annotation_id = ""
         self.selected_annotation_type = ""
