@@ -47,6 +47,9 @@ dev = [
     "ty>=0.0.1a0",
 ]
 all = [
+    "anyimage[contours,bioio,dev]",
+]
+complete = [
     "anyimage[sam,contours,bioio,dev]",
 ]
 
