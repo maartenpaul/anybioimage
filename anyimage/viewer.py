@@ -98,6 +98,7 @@ class BioImageViewer(
         self._mask_arrays = {}  # Store raw label arrays by mask id
         self._mask_caches = {}  # Cache rendered versions by mask id
         self._bioimage = None  # Store BioImage reference for lazy loading
+        self._full_array = None  # Full TCZYX array when image fits in RAM
         self._slice_cache = {}  # LRU cache for slice data: (T, C, Z) -> np.ndarray
         self._slice_cache_max_size = 128  # Max number of cached slices
         self._tile_cache = {}  # (t, z, tx, ty, res) -> base64 PNG

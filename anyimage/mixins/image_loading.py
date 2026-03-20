@@ -6,6 +6,9 @@ from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 
+# If the full image array fits within this threshold, load it all into RAM eagerly.
+_EAGER_LOAD_BYTES = 2 * 1024 ** 3  # 2 GB
+
 from ..utils import (
     CHANNEL_COLORS,
     array_to_base64,
@@ -109,6 +112,7 @@ class ImageLoadingMixin:
             img: A BioImage object from bioio
         """
         self._bioimage = img
+        self._full_array = None  # Reset; may be populated below
 
         # Extract dimension sizes (BioImage uses TCZYX order)
         self.dim_t = img.dims.T
@@ -117,14 +121,24 @@ class ImageLoadingMixin:
         self.height = img.dims.Y
         self.width = img.dims.X
 
+        # If the full dataset fits in RAM, load it all now to avoid per-slice zarr I/O
+        nbytes = img.dims.T * img.dims.C * img.dims.Z * img.dims.Y * img.dims.X * 2  # assume uint16
+        if nbytes <= _EAGER_LOAD_BYTES:
+            try:
+                self._full_array = img.get_image_dask_data("TCZYX").compute()
+            except Exception:
+                self._full_array = None  # Fall back to per-slice loading
+
         # Reset current positions
         self.current_t = 0
         self.current_c = 0
         self.current_z = 0
 
-        # Compute global min/max for each channel by sampling slices
-        # This ensures consistent normalization across all tiles, timeframes, and z-stacks
-        channel_ranges = self._compute_channel_ranges(img)
+        # Compute global min/max for each channel — use full array if available
+        if self._full_array is not None:
+            channel_ranges = self._compute_channel_ranges_from_array(self._full_array)
+        else:
+            channel_ranges = self._compute_channel_ranges(img)
 
         # Initialize channel settings with default colors and global ranges
         channel_settings = []
@@ -198,6 +212,14 @@ class ImageLoadingMixin:
 
         return channel_ranges
 
+    def _compute_channel_ranges_from_array(self, arr: np.ndarray) -> dict[int, tuple[float, float]]:
+        """Compute global min/max per channel from an already-loaded TCZYX array."""
+        channel_ranges = {}
+        for c in range(arr.shape[1]):
+            ch = arr[:, c, :, :, :]
+            channel_ranges[c] = (float(ch.min()), float(ch.max()))
+        return channel_ranges
+
     def _get_slice_cached(self, t: int, c: int, z: int) -> np.ndarray:
         """Get slice data from cache or load from disk.
 
@@ -209,6 +231,9 @@ class ImageLoadingMixin:
         Returns:
             2D numpy array of slice data
         """
+        if self._full_array is not None:
+            return self._full_array[t, c, z]
+
         cache_key = (t, c, z)
         if cache_key in self._slice_cache:
             return self._slice_cache[cache_key]
@@ -468,9 +493,10 @@ class ImageLoadingMixin:
         self._update_slice()
 
     def _clear_caches(self):
-        """Clear both slice and tile caches."""
+        """Clear both slice and tile caches (and full array — resolution/scene changed)."""
         self._slice_cache.clear()
         self._tile_cache.clear()
+        self._full_array = None
 
     def _on_resolution_change(self, change):
         """Observer callback when resolution level changes."""
