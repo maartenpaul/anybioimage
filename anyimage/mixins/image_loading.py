@@ -323,6 +323,21 @@ class ImageLoadingMixin:
         except Exception:
             pass
 
+    def _prefetch_tiles_for_slice(self, t: int, z: int) -> None:
+        """Pre-render all tiles for a (t, z) slice into the tile cache."""
+        if self._bioimage is None:
+            return
+        n_tiles_x = (self.width + self._tile_size - 1) // self._tile_size
+        n_tiles_y = (self.height + self._tile_size - 1) // self._tile_size
+        for ty in range(n_tiles_y):
+            for tx in range(n_tiles_x):
+                cache_key = (t, z, tx, ty, self.current_resolution)
+                if cache_key not in self._tile_cache:
+                    try:
+                        self._get_tile(t, z, tx, ty)
+                    except Exception:
+                        pass
+
     def _prefetch_adjacent_slices(self) -> None:
         """Pre-fetch adjacent Z and T slices in background for smoother scrubbing."""
         if self._bioimage is None:
@@ -335,9 +350,11 @@ class ImageLoadingMixin:
             if 0 <= z + delta < self.dim_z:
                 for c in visible_channels:
                     self._prefetch_executor.submit(self._prefetch_slice, t, c, z + delta)
+                self._prefetch_executor.submit(self._prefetch_tiles_for_slice, t, z + delta)
             if 0 <= t + delta < self.dim_t:
                 for c in visible_channels:
                     self._prefetch_executor.submit(self._prefetch_slice, t + delta, c, z)
+                self._prefetch_executor.submit(self._prefetch_tiles_for_slice, t + delta, z)
 
     def _update_slice(self):
         """Update the displayed slice based on current T, Z positions and channel settings."""

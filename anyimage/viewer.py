@@ -101,7 +101,7 @@ class BioImageViewer(
         self._slice_cache_max_size = 128  # Max number of cached slices
         self._tile_cache = {}  # (t, z, tx, ty, res) -> base64 PNG
         self._tile_cache_max_size = 2048  # Max cached tiles (~400MB for your dataset)
-        self._prefetch_executor = ThreadPoolExecutor(max_workers=4)  # Background prefetching
+        self._prefetch_executor = ThreadPoolExecutor(max_workers=6)  # Background prefetching
 
         # Observer for SAM label deletion
         self.observe(self._on_delete_sam_at, names=["_delete_sam_at"])
@@ -146,6 +146,9 @@ class BioImageViewer(
         const pendingTiles = new Set();
         const MAX_CACHE_SIZE = 2048;
         let useTileMode = false;
+        let ghostTiles = new Map();   // Previous frame's tiles for ghost rendering
+        let lastRenderedT = 0;
+        let lastRenderedZ = 0;
 
         function getVisibleTiles(scale, translateX, translateY, canvasWidth, canvasHeight, imageWidth, imageHeight, t, z) {
             const minX = Math.max(0, -translateX / scale);
@@ -233,6 +236,9 @@ class BioImageViewer(
         function clearTileCache() {
             tileCache.clear();
             pendingTiles.clear();
+            ghostTiles.clear();
+            lastRenderedT = model.get('current_t') || 0;
+            lastRenderedZ = model.get('current_z') || 0;
         }
 
         const container = document.createElement('div');
@@ -1113,20 +1119,44 @@ class BioImageViewer(
                     let allCached = true;
                     for (const tile of visibleTiles) {
                         const entry = tileCache.get(tile.key);
+                        const screenX = Math.round(tile.tx * TILE_SIZE * scale + translateX);
+                        const screenY = Math.round(tile.ty * TILE_SIZE * scale + translateY);
                         if (entry) {
                             entry.lastAccess = Date.now();
-                            const screenX = Math.round(tile.tx * TILE_SIZE * scale + translateX);
-                            const screenY = Math.round(tile.ty * TILE_SIZE * scale + translateY);
                             const drawW = Math.ceil(entry.img.width * scale);
                             const drawH = Math.ceil(entry.img.height * scale);
                             ctx.drawImage(entry.img, screenX, screenY, drawW, drawH);
                         } else {
                             allCached = false;
+                            // Fall back to ghost tile at same position (previous frame)
+                            const ghostKey = `${lastRenderedT}_${lastRenderedZ}_${tile.tx}_${tile.ty}`;
+                            const ghostEntry = ghostTiles.get(ghostKey);
+                            if (ghostEntry) {
+                                ctx.globalAlpha = 0.85;
+                                ctx.drawImage(ghostEntry.img, screenX, screenY,
+                                    Math.ceil(ghostEntry.img.width * scale), Math.ceil(ghostEntry.img.height * scale));
+                                ctx.globalAlpha = 1.0;
+                            } else if (baseImage) {
+                                // Secondary fallback: draw region from baseImage (current slice composite)
+                                const srcX = tile.tx * TILE_SIZE;
+                                const srcY = tile.ty * TILE_SIZE;
+                                const srcW = Math.min(TILE_SIZE, imgWidth - srcX);
+                                const srcH = Math.min(TILE_SIZE, imgHeight - srcY);
+                                if (srcW > 0 && srcH > 0) {
+                                    ctx.globalAlpha = 0.7;
+                                    ctx.drawImage(baseImage, srcX, srcY, srcW, srcH,
+                                        screenX, screenY, Math.ceil(srcW * scale), Math.ceil(srcH * scale));
+                                    ctx.globalAlpha = 1.0;
+                                }
+                            }
                         }
                     }
 
-                    // Prefetch adjacent T/Z when current view is fully loaded
+                    // Once all new tiles loaded, update tracking and clear ghost
                     if (allCached && visibleTiles.length > 0) {
+                        lastRenderedT = t;
+                        lastRenderedZ = z;
+                        ghostTiles.clear();
                         prefetchAdjacentTiles(visibleTiles, t, z);
                     }
                 } else if (baseImage) {
@@ -1646,8 +1676,20 @@ class BioImageViewer(
             renderCanvas();
         });
 
-        model.on('change:current_t', renderCanvas);
-        model.on('change:current_z', renderCanvas);
+        function onFrameChange() {
+            const newT = model.get('current_t');
+            const newZ = model.get('current_z');
+            if (newT !== lastRenderedT || newZ !== lastRenderedZ) {
+                ghostTiles.clear();
+                const prefix = `${lastRenderedT}_${lastRenderedZ}_`;
+                for (const [key, entry] of tileCache) {
+                    if (key.startsWith(prefix)) ghostTiles.set(key, entry);
+                }
+            }
+            renderCanvas();
+        }
+        model.on('change:current_t', onFrameChange);
+        model.on('change:current_z', onFrameChange);
         model.on('change:current_resolution', clearTileCache);
 
         new ResizeObserver(() => renderCanvas()).observe(canvasWrapper);
