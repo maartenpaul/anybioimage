@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.19.6"
+__generated_with = "0.20.4"
 app = marimo.App(width="medium")
 
 
@@ -12,25 +12,25 @@ def _():
     import bioio_tifffile
     import bioio_ome_zarr
     from anyimage import BioImageViewer
-    return BioImage, BioImageViewer, bioio_ome_zarr, mo, pd
+
+    return BioImage, BioImageViewer, bioio_tifffile, mo, pd
 
 
 @app.cell
-def _(BioImage, bioio_ome_zarr):
-    #img = BioImage("fluocell.tif", reader=bioio_tifffile.Reader)
-    #img = BioImage("fluocell.tif", reader=bioio_tifffile.Reader)
+def _(BioImage, bioio_tifffile):
+    #img = BioImage("examples/fluocell.tif", reader=bioio_tifffile.Reader)
 
-    #img = BioImage("image.tif", reader=bioio_tifffile.Reader)
-    img = BioImage("image.zarr", reader=bioio_ome_zarr.Reader)
+    img = BioImage("examples/image.tif", reader=bioio_tifffile.Reader)
+    #img = BioImage("examples/image.zarr", reader=bioio_ome_zarr.Reader)
 
-    #mask = BioImage("mask.tif", reader=bioio_tifffile.Reader)
+    mask = BioImage("examples/mask.tif", reader=bioio_tifffile.Reader)
 
     img.shape
-    return (img,)
+    return img, mask
 
 
 @app.cell
-def _(BioImageViewer, img, mo):
+def _(BioImageViewer, img, mask, mo):
     viewer = BioImageViewer()
     # Pass BioImage directly for lazy loading and 5D support
     # This enables T, Z, C sliders when the image has multiple dimensions
@@ -38,13 +38,13 @@ def _(BioImageViewer, img, mo):
 
     # Add multiple mask layers with different colors and settings
     # Each mask can have its own name, color, opacity, and visibility
-    #viewer.add_mask(
-    #    mask.data,
-    #    name="Segmentation",
+    viewer.add_mask(
+        mask.data,
+        name="Segmentation",
      ##   color="#ff0000",
-    #    opacity=0.5,
-    #    contours_only=False
-    #)
+        opacity=0.5,
+        contours_only=False
+    )
 
     # You can add additional masks with different settings:
     # viewer.add_mask(another_mask, name="Nuclei", color="#00ff00", opacity=0.3)
