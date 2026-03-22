@@ -12,6 +12,7 @@ import sys
 
 import numpy as np
 import zarr
+from PIL import Image, ImageDraw
 
 
 def create_test_plate(output_path="examples/test_plate.zarr"):
@@ -30,8 +31,6 @@ def create_test_plate(output_path="examples/test_plate.zarr"):
         "name": "test_plate",
     }
 
-    np.random.seed(42)
-
     for row in rows:
         for col in cols:
             well_path = f"{row}/{col}"
@@ -41,21 +40,19 @@ def create_test_plate(output_path="examples/test_plate.zarr"):
             }
 
             for fov in ["0", "1"]:
-                row_idx = ord(row) - ord("A")
-                col_idx = int(col) - 1
-                fov_idx = int(fov)
-
                 # T=2, C=3, Z=2, Y=256, X=256
                 data = np.zeros((2, 3, 2, 256, 256), dtype=np.uint16)
-                base = (row_idx * 2 + col_idx) * 1000 + fov_idx * 500
 
-                y, x = np.mgrid[0:256, 0:256]
                 for t in range(2):
                     for z in range(2):
-                        offset = base + t * 100 + z * 50
-                        data[t, 0, z] = ((x + offset) % 4096).astype(np.uint16)
-                        data[t, 1, z] = ((y + offset) % 4096).astype(np.uint16)
-                        data[t, 2, z] = ((x + y + offset) % 4096).astype(np.uint16)
+                        label = f"{row}{col} FOV{fov}\nT={t} Z={z}"
+                        img = Image.new("L", (256, 256), color=128)
+                        draw = ImageDraw.Draw(img)
+                        draw.text((10, 10), label, fill=65535 // 256)
+                        arr = (np.array(img, dtype=np.uint16) * 256)
+                        data[t, 0, z] = arr
+                        data[t, 1, z] = arr
+                        data[t, 2, z] = arr
 
                 fov_group = well_group.create_group(fov)
                 fov_group.attrs["multiscales"] = [
