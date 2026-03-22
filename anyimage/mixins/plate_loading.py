@@ -78,7 +78,7 @@ class PlateLoadingMixin:
         self._load_well_fovs(new_well)
 
     def _load_well_fovs(self, well_display_name):
-        """Load FOV list for the given well and auto-select the first FOV.
+        """Load FOV list for the given well, preserving current FOV if possible.
 
         Args:
             well_display_name: Display name of the well (e.g., "A1").
@@ -121,7 +121,12 @@ class PlateLoadingMixin:
         self.plate_fovs = fov_paths
 
         if fov_paths:
-            self.current_fov = fov_paths[0]
+            # Preserve current FOV if it exists in the new well
+            if self.current_fov in fov_paths:
+                # Trigger image load since well changed but FOV didn't
+                self._load_plate_image(self.current_fov)
+            else:
+                self.current_fov = fov_paths[0]
 
     def _on_fov_change(self, change):
         """Observer callback when current_fov changes."""
