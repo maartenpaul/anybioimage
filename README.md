@@ -1,17 +1,17 @@
-# anyimage
+# anybioimage
 
 Interactive bioimage viewer widget for Jupyter and marimo notebooks. Built on [anywidget](https://anywidget.dev), it supports multi-dimensional images, multi-channel composites, mask overlays, annotation tools, and HCS plate navigation.
 
 ## Installation
 
 ```bash
-uv pip install anyimage
+uv pip install anybioimage
 
 # With all recommended dependencies (excludes SAM/PyTorch)
-uv pip install "anyimage[all]"
+uv pip install "anybioimage[all]"
 
 # With SAM support (Python 3.10–3.12, requires PyTorch)
-uv pip install "anyimage[complete]"
+uv pip install "anybioimage[complete]"
 ```
 
 ## Quick Start
@@ -19,7 +19,7 @@ uv pip install "anyimage[complete]"
 ### Jupyter
 
 ```python
-from anyimage import BioImageViewer
+from anybioimage import BioImageViewer
 from bioio import BioImage
 import bioio_tifffile
 
@@ -32,7 +32,7 @@ viewer  # renders inline
 
 ```python
 import marimo as mo
-from anyimage import BioImageViewer
+from anybioimage import BioImageViewer
 from bioio import BioImage
 import bioio_tifffile
 
@@ -119,7 +119,7 @@ viewer.enable_sam(model_type="mobile_sam")  # ~40 MB, fastest
 viewer.enable_sam(model_type="sam_b")       # SAM base, ~375 MB
 ```
 
-Requires `uv pip install "anyimage[sam]"` (Python 3.10–3.12).
+Requires `uv pip install "anybioimage[sam]"` (Python 3.10–3.12).
 
 ## Optional dependencies
 
