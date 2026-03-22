@@ -53,7 +53,7 @@ uv pip install "anyimage[complete]"
 
     ```python
     import numpy as np
-    from anyimage import BioImageViewer
+    from anybioimage import BioImageViewer
 
     data = np.random.uint8(np.random.rand(3, 512, 512) * 255)  # CYX
     viewer = BioImageViewer()
