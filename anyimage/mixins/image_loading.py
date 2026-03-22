@@ -102,7 +102,21 @@ class ImageLoadingMixin:
         self.current_z = 0
         self.resolution_levels = []
         self.scenes = []
-        self._channel_settings = []  # No channel controls for simple arrays
+        # Store raw data for re-rendering on LUT/contrast changes
+        self._raw_numpy_array = data
+
+        # Always create channel settings so UI controls are available
+        data_min = float(data.min()) if data.size > 0 else 0.0
+        data_max = float(data.max()) if data.size > 0 else 1.0
+        self._channel_settings = [{
+            "name": "Channel 0",
+            "color": "#ffffff",
+            "visible": True,
+            "min": 0.0,
+            "max": 1.0,
+            "data_min": data_min,
+            "data_max": data_max,
+        }]
         self._bioimage = None
 
         self.image_data = array_to_base64(normalized)
@@ -157,7 +171,7 @@ class ImageLoadingMixin:
                 data_min, data_max = channel_ranges.get(i, (0.0, 1.0))
                 channel_settings.append({
                     "name": f"Channel {i}",
-                    "color": CHANNEL_COLORS[i % len(CHANNEL_COLORS)],
+                    "color": "#ffffff" if self.dim_c == 1 else CHANNEL_COLORS[i % len(CHANNEL_COLORS)],
                     "visible": True,
                     "min": 0.0,
                     "max": 1.0,
@@ -644,8 +658,35 @@ class ImageLoadingMixin:
         """Observer callback when T or Z dimension changes."""
         self._update_slice()
 
+    def _update_numpy_image(self):
+        """Re-render a numpy array image using current channel settings (LUT/contrast)."""
+        raw = getattr(self, "_raw_numpy_array", None)
+        if raw is None:
+            return
+        settings = self._channel_settings
+        if not settings:
+            return
+        ch = settings[0]
+        color = ch.get("color", "#ffffff")
+        vmin = ch.get("min", 0.0)
+        vmax = ch.get("max", 1.0)
+        data_min = ch.get("data_min")
+        data_max = ch.get("data_max")
+
+        composite = composite_channels(
+            [raw], [color], [vmin], [vmax],
+            [data_min], [data_max],
+        )
+        self._image_array = np.mean(composite, axis=2).astype(np.uint8)
+        self.image_data = array_to_base64(composite)
+
     def _on_channel_settings_change(self, change):
         """Observer callback when channel settings change."""
+        # For numpy arrays (no BioImage), re-render directly
+        if self._bioimage is None:
+            self._update_numpy_image()
+            return
+
         if getattr(self, "_precompute_event", None) is not None:
             self._precompute_event.set()
         self._tile_cache.clear()

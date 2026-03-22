@@ -405,47 +405,109 @@ class BioImageViewer(
             imageItem.appendChild(imageLabel);
             layersDropdown.appendChild(imageItem);
 
-            // Brightness slider
-            const brightnessItem = document.createElement('div');
-            brightnessItem.className = 'layer-item sub-item slider-item';
-            const brightnessLabel = document.createElement('span');
-            brightnessLabel.className = 'slider-label';
-            brightnessLabel.textContent = 'Brightness';
-            const brightnessSlider = document.createElement('input');
-            brightnessSlider.type = 'range';
-            brightnessSlider.min = '-1';
-            brightnessSlider.max = '1';
-            brightnessSlider.step = '0.05';
-            brightnessSlider.value = model.get('image_brightness') || 0;
-            brightnessSlider.className = 'adjustment-slider';
-            brightnessSlider.addEventListener('input', () => {
-                model.set('image_brightness', parseFloat(brightnessSlider.value));
-                model.save_changes();
-            });
-            brightnessItem.appendChild(brightnessLabel);
-            brightnessItem.appendChild(brightnessSlider);
-            layersDropdown.appendChild(brightnessItem);
+            // Channel controls (always shown under Image)
+            const channelSettings = model.get('_channel_settings') || [];
+            if (channelSettings.length > 0) {
+                channelSettings.forEach((ch, idx) => {
+                    // Channel row: visibility toggle, color dot, name, color picker
+                    const chRow = document.createElement('div');
+                    chRow.className = 'layer-item channel-layer-item';
 
-            // Contrast slider
-            const contrastItem = document.createElement('div');
-            contrastItem.className = 'layer-item sub-item slider-item';
-            const contrastLabel = document.createElement('span');
-            contrastLabel.className = 'slider-label';
-            contrastLabel.textContent = 'Contrast';
-            const contrastSlider = document.createElement('input');
-            contrastSlider.type = 'range';
-            contrastSlider.min = '-1';
-            contrastSlider.max = '1';
-            contrastSlider.step = '0.05';
-            contrastSlider.value = model.get('image_contrast') || 0;
-            contrastSlider.className = 'adjustment-slider';
-            contrastSlider.addEventListener('input', () => {
-                model.set('image_contrast', parseFloat(contrastSlider.value));
-                model.save_changes();
-            });
-            contrastItem.appendChild(contrastLabel);
-            contrastItem.appendChild(contrastSlider);
-            layersDropdown.appendChild(contrastItem);
+                    const chToggle = document.createElement('button');
+                    chToggle.className = 'layer-toggle' + (ch.visible !== false ? ' visible' : '');
+                    chToggle.innerHTML = ch.visible !== false ? ICONS.eye : ICONS.eyeOff;
+                    chToggle.addEventListener('click', () => {
+                        const settings = [...model.get('_channel_settings')];
+                        const newVisible = !settings[idx].visible;
+                        settings[idx] = { ...settings[idx], visible: newVisible };
+                        model.set('_channel_settings', settings);
+                        model.save_changes();
+                        chToggle.classList.toggle('visible', newVisible);
+                        chToggle.innerHTML = newVisible ? ICONS.eye : ICONS.eyeOff;
+                    });
+
+                    const colorDot = document.createElement('span');
+                    colorDot.className = 'channel-dot';
+                    colorDot.style.backgroundColor = ch.color || '#ffffff';
+
+                    const chName = document.createElement('span');
+                    chName.className = 'channel-name';
+                    chName.textContent = ch.name || `Ch ${idx}`;
+
+                    const colorPicker = document.createElement('input');
+                    colorPicker.type = 'color';
+                    colorPicker.value = ch.color || '#ffffff';
+                    colorPicker.className = 'color-swatch';
+                    colorPicker.addEventListener('click', (e) => e.stopPropagation());
+                    colorPicker.addEventListener('input', (e) => {
+                        const settings = [...model.get('_channel_settings')];
+                        settings[idx] = { ...settings[idx], color: colorPicker.value };
+                        model.set('_channel_settings', settings);
+                        model.save_changes();
+                        colorDot.style.backgroundColor = colorPicker.value;
+                    });
+
+                    chRow.appendChild(chToggle);
+                    chRow.appendChild(colorDot);
+                    chRow.appendChild(chName);
+                    chRow.appendChild(colorPicker);
+                    layersDropdown.appendChild(chRow);
+
+                    // Min slider row
+                    const minRow = document.createElement('div');
+                    minRow.className = 'layer-item sub-item channel-contrast-row';
+                    const minLabel = document.createElement('span');
+                    minLabel.className = 'slider-label';
+                    minLabel.textContent = 'Min';
+                    const minSlider = document.createElement('input');
+                    minSlider.type = 'range';
+                    minSlider.min = '0';
+                    minSlider.max = '100';
+                    minSlider.value = String((ch.min || 0) * 100);
+                    minSlider.className = 'adjustment-slider';
+                    const minValue = document.createElement('span');
+                    minValue.className = 'slider-value';
+                    minValue.textContent = Math.round((ch.min || 0) * 100) + '%';
+                    minSlider.addEventListener('input', () => {
+                        const settings = [...model.get('_channel_settings')];
+                        settings[idx] = { ...settings[idx], min: parseInt(minSlider.value) / 100 };
+                        model.set('_channel_settings', settings);
+                        model.save_changes();
+                        minValue.textContent = minSlider.value + '%';
+                    });
+                    minRow.appendChild(minLabel);
+                    minRow.appendChild(minSlider);
+                    minRow.appendChild(minValue);
+                    layersDropdown.appendChild(minRow);
+
+                    // Max slider row
+                    const maxRow = document.createElement('div');
+                    maxRow.className = 'layer-item sub-item channel-contrast-row';
+                    const maxLabel = document.createElement('span');
+                    maxLabel.className = 'slider-label';
+                    maxLabel.textContent = 'Max';
+                    const maxSlider = document.createElement('input');
+                    maxSlider.type = 'range';
+                    maxSlider.min = '0';
+                    maxSlider.max = '100';
+                    maxSlider.value = String((ch.max || 1) * 100);
+                    maxSlider.className = 'adjustment-slider';
+                    const maxValue = document.createElement('span');
+                    maxValue.className = 'slider-value';
+                    maxValue.textContent = Math.round((ch.max || 1) * 100) + '%';
+                    maxSlider.addEventListener('input', () => {
+                        const settings = [...model.get('_channel_settings')];
+                        settings[idx] = { ...settings[idx], max: parseInt(maxSlider.value) / 100 };
+                        model.set('_channel_settings', settings);
+                        model.save_changes();
+                        maxValue.textContent = maxSlider.value + '%';
+                    });
+                    maxRow.appendChild(maxLabel);
+                    maxRow.appendChild(maxSlider);
+                    maxRow.appendChild(maxValue);
+                    layersDropdown.appendChild(maxRow);
+                });
+            }
 
             // Mask layers section
             const masks = model.get('_masks_data') || [];
@@ -789,162 +851,17 @@ class BioImageViewer(
             return wrapper;
         }
 
-        function createChannelControls() {
-            const wrapper = document.createElement('div');
-            wrapper.className = 'channel-controls';
-
-            const channelSettings = model.get('_channel_settings') || [];
-            if (channelSettings.length <= 1) return wrapper;
-
-            const label = document.createElement('span');
-            label.className = 'dim-label';
-            label.textContent = 'Channels';
-            wrapper.appendChild(label);
-
-            channelSettings.forEach((ch, idx) => {
-                const chItem = document.createElement('div');
-                chItem.className = 'channel-chip';
-
-                const toggle = document.createElement('input');
-                toggle.type = 'checkbox';
-                toggle.checked = ch.visible !== false;
-                toggle.className = 'channel-toggle';
-                toggle.addEventListener('change', (e) => {
-                    e.stopPropagation();
-                    const settings = [...model.get('_channel_settings')];
-                    settings[idx] = { ...settings[idx], visible: toggle.checked };
-                    model.set('_channel_settings', settings);
-                    model.save_changes();
-                });
-
-                const colorDot = document.createElement('span');
-                colorDot.className = 'channel-dot';
-                colorDot.style.backgroundColor = ch.color || '#ffffff';
-
-                const name = document.createElement('span');
-                name.className = 'channel-name';
-                name.textContent = ch.name || `Ch ${idx}`;
-
-                chItem.appendChild(toggle);
-                chItem.appendChild(colorDot);
-                chItem.appendChild(name);
-
-                // Popup for contrast controls
-                const popup = document.createElement('div');
-                popup.className = 'channel-popup';
-
-                // Prevent popup from closing when interacting inside it
-                popup.addEventListener('click', (e) => e.stopPropagation());
-                popup.addEventListener('mousedown', (e) => e.stopPropagation());
-                popup.addEventListener('mouseup', (e) => e.stopPropagation());
-
-                const popupHeader = document.createElement('div');
-                popupHeader.className = 'popup-header';
-                popupHeader.textContent = ch.name || `Channel ${idx}`;
-
-                const colorRow = document.createElement('div');
-                colorRow.className = 'popup-row';
-                const colorLabel = document.createElement('span');
-                colorLabel.textContent = 'Color';
-                const colorPicker = document.createElement('input');
-                colorPicker.type = 'color';
-                colorPicker.value = ch.color || '#ffffff';
-                colorPicker.className = 'popup-color';
-                colorPicker.addEventListener('click', (e) => e.stopPropagation());
-                colorPicker.addEventListener('input', (e) => {
-                    const settings = [...model.get('_channel_settings')];
-                    settings[idx] = { ...settings[idx], color: colorPicker.value };
-                    model.set('_channel_settings', settings);
-                    model.save_changes();
-                    colorDot.style.backgroundColor = colorPicker.value;
-                });
-                colorRow.appendChild(colorLabel);
-                colorRow.appendChild(colorPicker);
-
-                const minRow = document.createElement('div');
-                minRow.className = 'popup-row';
-                const minLabel = document.createElement('span');
-                minLabel.textContent = 'Min';
-                const minSlider = document.createElement('input');
-                minSlider.type = 'range';
-                minSlider.min = '0';
-                minSlider.max = '100';
-                minSlider.value = String((ch.min || 0) * 100);
-                minSlider.className = 'popup-slider';
-                const minValue = document.createElement('span');
-                minValue.className = 'popup-value';
-                minValue.textContent = Math.round((ch.min || 0) * 100) + '%';
-                minSlider.addEventListener('input', (e) => {
-                    const settings = [...model.get('_channel_settings')];
-                    settings[idx] = { ...settings[idx], min: parseInt(minSlider.value) / 100 };
-                    model.set('_channel_settings', settings);
-                    model.save_changes();
-                    minValue.textContent = minSlider.value + '%';
-                });
-                minRow.appendChild(minLabel);
-                minRow.appendChild(minSlider);
-                minRow.appendChild(minValue);
-
-                const maxRow = document.createElement('div');
-                maxRow.className = 'popup-row';
-                const maxLabel = document.createElement('span');
-                maxLabel.textContent = 'Max';
-                const maxSlider = document.createElement('input');
-                maxSlider.type = 'range';
-                maxSlider.min = '0';
-                maxSlider.max = '100';
-                maxSlider.value = String((ch.max || 1) * 100);
-                maxSlider.className = 'popup-slider';
-                const maxValue = document.createElement('span');
-                maxValue.className = 'popup-value';
-                maxValue.textContent = Math.round((ch.max || 1) * 100) + '%';
-                maxSlider.addEventListener('input', (e) => {
-                    const settings = [...model.get('_channel_settings')];
-                    settings[idx] = { ...settings[idx], max: parseInt(maxSlider.value) / 100 };
-                    model.set('_channel_settings', settings);
-                    model.save_changes();
-                    maxValue.textContent = maxSlider.value + '%';
-                });
-                maxRow.appendChild(maxLabel);
-                maxRow.appendChild(maxSlider);
-                maxRow.appendChild(maxValue);
-
-                popup.appendChild(popupHeader);
-                popup.appendChild(colorRow);
-                popup.appendChild(minRow);
-                popup.appendChild(maxRow);
-
-                chItem.appendChild(popup);
-
-                // Toggle popup on click (only on the chip itself, not the popup)
-                chItem.addEventListener('click', (e) => {
-                    if (e.target === toggle || popup.contains(e.target)) return;
-                    e.stopPropagation();
-                    // Close other popups
-                    wrapper.querySelectorAll('.channel-popup.open').forEach(p => {
-                        if (p !== popup) p.classList.remove('open');
-                    });
-                    popup.classList.toggle('open');
-                });
-
-                wrapper.appendChild(chItem);
-            });
-
-            return wrapper;
-        }
-
         function rebuildDimControls() {
             dimControls.innerHTML = '';
 
             const dimT = model.get('dim_t') || 1;
-            const dimC = model.get('dim_c') || 1;
             const dimZ = model.get('dim_z') || 1;
             const scenes = model.get('scenes') || [];
             const plateWells = model.get('plate_wells') || [];
             const plateFovs = model.get('plate_fovs') || [];
 
-            // Only show controls if we have multi-dimensional data
-            const hasMultiDim = dimT > 1 || dimC > 1 || dimZ > 1 || scenes.length > 1 || plateWells.length > 0;
+            // Only show controls if we have multi-dimensional data (channels are now in Layers)
+            const hasMultiDim = dimT > 1 || dimZ > 1 || scenes.length > 1 || plateWells.length > 0;
             dimControls.style.display = hasMultiDim ? 'flex' : 'none';
 
             if (plateWells.length > 0) {
@@ -961,10 +878,6 @@ class BioImageViewer(
             }
             if (dimZ > 1) {
                 dimControls.appendChild(createDimSlider('Z', 'dim_z', 'current_z', dimZ));
-            }
-            // Channel controls (replaces C slider for composite view)
-            if (dimC > 1) {
-                dimControls.appendChild(createChannelControls());
             }
         }
 
@@ -1022,14 +935,6 @@ class BioImageViewer(
         container.appendChild(dimControls);
         container.appendChild(statusBar);
         el.appendChild(container);
-
-        // Close channel popups when clicking on canvas or toolbar
-        canvasWrapper.addEventListener('click', () => {
-            dimControls.querySelectorAll('.channel-popup.open').forEach(p => p.classList.remove('open'));
-        });
-        toolbar.addEventListener('click', () => {
-            dimControls.querySelectorAll('.channel-popup.open').forEach(p => p.classList.remove('open'));
-        });
 
         let scale = 1;
         let translateX = 0;
@@ -1728,6 +1633,7 @@ class BioImageViewer(
             clearTileCache();  // Contrast/color changed
             updateDimStatus();
             renderCanvas();
+            if (dropdownOpen) rebuildLayersDropdown();
         });
         model.on('change:dim_z', rebuildDimControls);
         model.on('change:scenes', rebuildDimControls);
@@ -2128,111 +2034,31 @@ class BioImageViewer(
         background: white;
         cursor: pointer;
     }
-    .channel-controls {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        padding-left: 8px;
-        border-left: 1px solid #ddd;
+    .channel-layer-item {
+        padding-left: 24px;
     }
-    .channel-chip {
-        position: relative;
-        display: flex;
-        align-items: center;
-        gap: 4px;
-        padding: 4px 8px;
-        background: #f0f0f0;
-        border-radius: 4px;
-        cursor: pointer;
-        user-select: none;
-    }
-    .channel-chip:hover {
-        background: #e8e8e8;
-    }
-    .channel-toggle {
-        width: 14px;
-        height: 14px;
-        cursor: pointer;
-    }
-    .channel-dot {
-        width: 12px;
-        height: 12px;
+    .channel-layer-item .channel-dot {
+        width: 10px;
+        height: 10px;
         border-radius: 2px;
         border: 1px solid rgba(0,0,0,0.2);
+        flex-shrink: 0;
     }
-    .channel-name {
-        font-size: 11px;
-        color: #555;
-    }
-    .channel-popup {
-        position: absolute;
-        bottom: 100%;
-        left: 0;
-        margin-bottom: 4px;
-        min-width: 180px;
-        background: #fff;
-        border: 1px solid #ddd;
-        border-radius: 8px;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-        padding: 12px;
-        display: none;
-        z-index: 200;
-    }
-    .channel-popup.open {
-        display: block;
-    }
-    .popup-header {
-        font-size: 12px;
-        font-weight: 600;
-        color: #333;
-        margin-bottom: 12px;
-        padding-bottom: 8px;
-        border-bottom: 1px solid #eee;
-    }
-    .popup-row {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        margin-bottom: 8px;
-    }
-    .popup-row span:first-child {
-        font-size: 11px;
-        color: #666;
-        min-width: 35px;
-    }
-    .popup-color {
-        width: 28px;
-        height: 28px;
-        padding: 0;
-        border: 1px solid #ccc;
-        border-radius: 4px;
-        cursor: pointer;
-    }
-    .popup-slider {
+    .channel-layer-item .channel-name {
         flex: 1;
-        height: 4px;
-        -webkit-appearance: none;
-        background: #e0e0e0;
-        border-radius: 2px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-size: 12px;
     }
-    .popup-slider::-webkit-slider-thumb {
-        -webkit-appearance: none;
-        width: 14px;
-        height: 14px;
-        border-radius: 50%;
-        background: #0d6efd;
-        cursor: pointer;
+    .channel-contrast-row {
+        padding-left: 52px;
     }
-    .popup-slider::-moz-range-thumb {
-        width: 14px;
-        height: 14px;
-        border-radius: 50%;
-        background: #0d6efd;
-        cursor: pointer;
-        border: none;
+    .channel-contrast-row .slider-label {
+        min-width: 28px;
     }
-    .popup-value {
-        font-size: 11px;
+    .slider-value {
+        font-size: 10px;
         color: #666;
         min-width: 32px;
         text-align: right;
@@ -2332,39 +2158,13 @@ class BioImageViewer(
             border-color: #555;
             color: #eee;
         }
-        .channel-controls {
-            border-color: #404040;
-        }
-        .channel-chip {
-            background: #3a3a3a;
-        }
-        .channel-chip:hover {
-            background: #444;
-        }
-        .channel-dot {
+        .channel-layer-item .channel-dot {
             border-color: rgba(255,255,255,0.2);
         }
-        .channel-name {
+        .channel-layer-item .channel-name {
             color: #bbb;
         }
-        .channel-popup {
-            background: #2d2d2d;
-            border-color: #404040;
-        }
-        .popup-header {
-            color: #eee;
-            border-color: #404040;
-        }
-        .popup-row span:first-child {
-            color: #aaa;
-        }
-        .popup-color {
-            border-color: #555;
-        }
-        .popup-slider {
-            background: #404040;
-        }
-        .popup-value {
+        .slider-value {
             color: #aaa;
         }
     }
