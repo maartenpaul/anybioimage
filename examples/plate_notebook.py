@@ -7,7 +7,7 @@ app = marimo.App(width="medium")
 @app.cell
 def _():
     import marimo as mo
-    from anyimage import BioImageViewer
+    from anybioimage import BioImageViewer
 
     return BioImageViewer, mo
 

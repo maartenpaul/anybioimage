@@ -21,11 +21,11 @@ jobs:
           uv pip install -e ".[all]"
 
       - name: Lint (ruff)
-        run: uv run ruff check anyimage/ --output-format=github
+        run: uv run ruff check anybioimage/ --output-format=github
         continue-on-error: true  # pre-existing issues; fix incrementally
 
       - name: Type check (ty)
-        run: uv run ty check anyimage/
+        run: uv run ty check anybioimage/
         continue-on-error: true  # mixin pattern causes false positives; non-blocking
 
   test:

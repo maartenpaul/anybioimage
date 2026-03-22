@@ -1,11 +1,11 @@
 # SAM Integration
 
-anyimage integrates [Segment Anything Model (SAM)](https://segment-anything.com) for interactive segmentation. Draw a rectangle or place a point, and SAM generates a segmentation mask automatically.
+anybioimage integrates [Segment Anything Model (SAM)](https://segment-anything.com) for interactive segmentation. Draw a rectangle or place a point, and SAM generates a segmentation mask automatically.
 
 ## Installation
 
 ```bash
-uv pip install "anyimage[sam]"
+uv pip install "anybioimage[sam]"
 ```
 
 !!! warning "Python version"
@@ -14,7 +14,7 @@ uv pip install "anyimage[sam]"
 ## Usage
 
 ```python
-from anyimage import BioImageViewer
+from anybioimage import BioImageViewer
 from bioio import BioImage
 
 viewer = BioImageViewer()

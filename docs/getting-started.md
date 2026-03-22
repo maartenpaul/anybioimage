@@ -29,7 +29,7 @@ uv pip install "anyimage[complete]"  # includes SAM (Python 3.10–3.12)
 Just evaluate the viewer in a cell — it renders inline like any other widget:
 
 ```python
-from anyimage import BioImageViewer
+from anybioimage import BioImageViewer
 from bioio import BioImage
 
 viewer = BioImageViewer()
@@ -43,7 +43,7 @@ Wrap with `mo.ui.anywidget()` to make the widget reactive:
 
 ```python
 import marimo as mo
-from anyimage import BioImageViewer
+from anybioimage import BioImageViewer
 from bioio import BioImage
 
 viewer = BioImageViewer()

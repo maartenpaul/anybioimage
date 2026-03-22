@@ -1,11 +1,11 @@
 ---
-name: anyimage
-description: "Integrate and use the anyimage BioImageViewer widget to display biological images, overlays, and annotations in Jupyter and marimo notebooks. Use this skill when asked to display images with BioImageViewer, add mask overlays or segmentation results, annotate images with rectangles/polygons/points, enable SAM (Segment Anything Model) for interactive segmentation, load multi-dimensional 5D images (TCZYX) with BioImage, show multichannel fluorescence images with per-channel colors and contrast, export annotations as DataFrames, or integrate anyimage into a marimo or Jupyter workflow."
+name: anybioimage
+description: "Integrate and use the anybioimage BioImageViewer widget to display biological images, overlays, and annotations in Jupyter and marimo notebooks. Use this skill when asked to display images with BioImageViewer, add mask overlays or segmentation results, annotate images with rectangles/polygons/points, enable SAM (Segment Anything Model) for interactive segmentation, load multi-dimensional 5D images (TCZYX) with BioImage, show multichannel fluorescence images with per-channel colors and contrast, export annotations as DataFrames, or integrate anybioimage into a marimo or Jupyter workflow."
 ---
 
-# anyimage Skill
+# anybioimage Skill
 
-`anyimage` provides `BioImageViewer`, an interactive widget for visualizing biological images with mask overlays, annotations, and SAM segmentation in Jupyter and marimo notebooks.
+`anybioimage` provides `BioImageViewer`, an interactive widget for visualizing biological images with mask overlays, annotations, and SAM segmentation in Jupyter and marimo notebooks.
 
 ## Installation
 
@@ -19,7 +19,7 @@ uv pip install -e ".[sam]"   # SAM support only
 ### Jupyter
 
 ```python
-from anyimage import BioImageViewer
+from anybioimage import BioImageViewer
 import numpy as np
 
 viewer = BioImageViewer()
@@ -31,7 +31,7 @@ viewer  # Display inline
 
 ```python
 import marimo as mo
-from anyimage import BioImageViewer
+from anybioimage import BioImageViewer
 
 @app.cell
 def _():

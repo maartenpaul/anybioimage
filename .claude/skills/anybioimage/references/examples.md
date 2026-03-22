@@ -1,4 +1,4 @@
-# anyimage Usage Examples
+# anybioimage Usage Examples
 
 ## Table of Contents
 1. [Basic 2D Image Display](#basic-2d-image-display)
@@ -15,7 +15,7 @@
 ## Basic 2D Image Display
 
 ```python
-from anyimage import BioImageViewer
+from anybioimage import BioImageViewer
 import numpy as np
 
 viewer = BioImageViewer()
@@ -29,7 +29,7 @@ viewer
 ## Multichannel Fluorescence Image
 
 ```python
-from anyimage import BioImageViewer
+from anybioimage import BioImageViewer
 from bioio import BioImage
 
 viewer = BioImageViewer()
@@ -53,7 +53,7 @@ viewer
 ## Segmentation Mask Overlay
 
 ```python
-from anyimage import BioImageViewer
+from anybioimage import BioImageViewer
 import numpy as np
 from skimage.filters import threshold_otsu
 from skimage.measure import label
@@ -108,7 +108,7 @@ viewer
 ## SAM Segmentation Workflow
 
 ```python
-from anyimage import BioImageViewer
+from anybioimage import BioImageViewer
 from bioio import BioImage
 
 viewer = BioImageViewer()
@@ -171,7 +171,7 @@ viewer.rois_df = large_rois
 
 ```python
 import marimo as mo
-from anyimage import BioImageViewer
+from anybioimage import BioImageViewer
 from bioio import BioImage
 
 @app.cell
@@ -208,7 +208,7 @@ def _(rois):
 ## Large Image (OME-Zarr)
 
 ```python
-from anyimage import BioImageViewer
+from anybioimage import BioImageViewer
 from bioio import BioImage
 
 viewer = BioImageViewer()

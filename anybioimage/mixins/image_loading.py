@@ -140,7 +140,7 @@ class ImageLoadingMixin:
                     arr = np.ascontiguousarray(arr.astype(arr.dtype.newbyteorder("=")))
                 eager_array = arr
             except Exception as e:
-                print(f"[anyimage] Eager load failed, falling back to lazy loading: {e}")
+                print(f"[anybioimage] Eager load failed, falling back to lazy loading: {e}")
 
         if eager_array is not None:
             channel_ranges = self._compute_channel_ranges_from_array(eager_array)

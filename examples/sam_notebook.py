@@ -10,7 +10,7 @@ def _():
     import pandas as pd
     from bioio import BioImage
     import bioio_tifffile
-    from anyimage import BioImageViewer
+    from anybioimage import BioImageViewer
     return BioImage, BioImageViewer, bioio_tifffile, mo, pd
 
 

@@ -3,7 +3,7 @@
 ## BioImageViewer
 
 ```python
-from anyimage import BioImageViewer
+from anybioimage import BioImageViewer
 viewer = BioImageViewer()
 ```
 

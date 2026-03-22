@@ -1,7 +1,7 @@
-site_name: anyimage
+site_name: anybioimage
 site_description: Interactive bioimage viewer widget for Jupyter and marimo
-repo_url: https://github.com/maartenpaul/anyimage
-repo_name: maartenpaul/anyimage
+repo_url: https://github.com/maartenpaul/anybioimage
+repo_name: maartenpaul/anybioimage
 
 theme:
   name: material

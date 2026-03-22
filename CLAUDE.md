@@ -1,4 +1,4 @@
-# anyimage
+# anybioimage
 
 Interactive anywidget for visualizing biological images in Jupyter and marimo notebooks.
 
@@ -15,7 +15,7 @@ Interactive anywidget for visualizing biological images in Jupyter and marimo no
 ## Project Structure
 
 ```
-anyimage/
+anybioimage/
 ├── __init__.py           # Public API exports
 ├── utils.py              # Image processing helpers and color constants
 ├── viewer.py             # Main BioImageViewer widget (JS/CSS frontend + traitlets)
@@ -44,7 +44,7 @@ uv pip install -e ".[complete]" # Everything including SAM
 ## Usage
 
 ```python
-from anyimage import BioImageViewer
+from anybioimage import BioImageViewer
 from bioio import BioImage
 
 # Load and display an image
@@ -57,7 +57,7 @@ viewer
 ### HCS Plate Usage
 
 ```python
-from anyimage import BioImageViewer
+from anybioimage import BioImageViewer
 
 viewer = BioImageViewer()
 viewer.set_plate("plate.zarr")  # OME-Zarr HCS plate
@@ -109,17 +109,17 @@ Use the `playwright-cli` skill to test the widget in a real browser against a ru
 
 ### Screenshots
 
-Store all Playwright screenshots in a temporary folder at `/tmp/anyimage-screenshots/`. Create it at the start of a testing session and delete it when done:
+Store all Playwright screenshots in a temporary folder at `/tmp/anybioimage-screenshots/`. Create it at the start of a testing session and delete it when done:
 
 ```bash
-mkdir -p /tmp/anyimage-screenshots
-# ... run tests, save screenshots to /tmp/anyimage-screenshots/
-rm -rf /tmp/anyimage-screenshots
+mkdir -p /tmp/anybioimage-screenshots
+# ... run tests, save screenshots to /tmp/anybioimage-screenshots/
+rm -rf /tmp/anybioimage-screenshots
 ```
 
 In playwright-cli, pass the temp path when taking screenshots:
 ```javascript
-await page.screenshot({ path: '/tmp/anyimage-screenshots/step-name.png' });
+await page.screenshot({ path: '/tmp/anybioimage-screenshots/step-name.png' });
 ```
 
 ### Setup
@@ -132,7 +132,7 @@ marimo edit examples/image_notebook.py
 playwright-cli open "http://localhost:2718?access_token=<token>" --browser=chromium
 ```
 
-### Key patterns for testing anyimage widgets
+### Key patterns for testing anybioimage widgets
 
 **The widget renders inside a shadow DOM** (`MARIMO-ANYWIDGET` element). Regular DOM queries won't find the canvas — use `element.shadowRoot`:
 

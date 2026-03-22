@@ -1,4 +1,4 @@
-# anyimage API Reference
+# anybioimage API Reference
 
 ## Table of Contents
 1. [BioImageViewer — Public Methods](#public-methods)
@@ -207,7 +207,7 @@ Default channel colors follow the `CHANNEL_COLORS` palette: GFP green, RFP red, 
 ## Utility Functions
 
 ```python
-from anyimage import normalize_image, array_to_base64, labels_to_rgba, hex_to_rgb, composite_channels, MASK_COLORS, CHANNEL_COLORS
+from anybioimage import normalize_image, array_to_base64, labels_to_rgba, hex_to_rgb, composite_channels, MASK_COLORS, CHANNEL_COLORS
 ```
 
 ```python

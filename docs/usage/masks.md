@@ -46,7 +46,7 @@ The **Layers** dropdown in the toolbar lets you toggle visibility, adjust opacit
 With `contours_only=True`, only the outlines of labeled regions are drawn. Requires `scipy`:
 
 ```bash
-pip install "anyimage[contours]"
+pip install "anybioimage[contours]"
 ```
 
 ```python

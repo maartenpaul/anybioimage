@@ -1,9 +1,9 @@
-"""Tests for anyimage utility functions."""
+"""Tests for anybioimage utility functions."""
 
 import numpy as np
 import pytest
 
-from anyimage.utils import (
+from anybioimage.utils import (
     array_to_base64,
     composite_channels,
     hex_to_rgb,
@@ -120,16 +120,16 @@ class TestCompositeChannels:
 
 class TestBioImageViewer:
     def test_import(self):
-        from anyimage import BioImageViewer
+        from anybioimage import BioImageViewer
         assert BioImageViewer is not None
 
     def test_instantiate(self):
-        from anyimage import BioImageViewer
+        from anybioimage import BioImageViewer
         viewer = BioImageViewer()
         assert viewer is not None
 
     def test_set_image_numpy(self):
-        from anyimage import BioImageViewer
+        from anybioimage import BioImageViewer
         viewer = BioImageViewer()
         arr = np.random.randint(0, 255, (64, 64), dtype=np.uint8)
         viewer.set_image(arr)
@@ -137,7 +137,7 @@ class TestBioImageViewer:
         assert viewer.height == 64
 
     def test_set_image_numpy_always_2d(self):
-        from anyimage import BioImageViewer
+        from anybioimage import BioImageViewer
         viewer = BioImageViewer()
         # Raw numpy arrays are squeezed to 2D — use BioImage for 5D support
         arr = np.random.randint(0, 255, (2, 3, 1, 32, 32), dtype=np.uint8)
@@ -148,7 +148,7 @@ class TestBioImageViewer:
         assert viewer.dim_z == 1
 
     def test_add_and_clear_mask(self):
-        from anyimage import BioImageViewer
+        from anybioimage import BioImageViewer
         viewer = BioImageViewer()
         viewer.set_image(np.zeros((32, 32), dtype=np.uint8))
         labels = np.zeros((32, 32), dtype=np.int32)
@@ -159,7 +159,7 @@ class TestBioImageViewer:
         assert len(viewer.get_mask_ids()) == 0
 
     def test_annotations_dataframes(self):
-        from anyimage import BioImageViewer
+        from anybioimage import BioImageViewer
         viewer = BioImageViewer()
         viewer.set_image(np.zeros((32, 32), dtype=np.uint8))
         assert hasattr(viewer, "rois_df")

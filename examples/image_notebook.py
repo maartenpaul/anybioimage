@@ -11,7 +11,7 @@ def _():
     from bioio import BioImage
     import bioio_tifffile
     import bioio_ome_zarr
-    from anyimage import BioImageViewer
+    from anybioimage import BioImageViewer
 
     return BioImage, BioImageViewer, bioio_ome_zarr, mo, pd
 

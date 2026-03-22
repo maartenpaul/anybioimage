@@ -1,4 +1,4 @@
-"""Utility functions and constants for anyimage."""
+"""Utility functions and constants for anybioimage."""
 
 import base64
 from io import BytesIO

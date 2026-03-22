@@ -1,4 +1,4 @@
-# anyimage
+# anybioimage
 
 Interactive bioimage viewer widget for Jupyter and marimo notebooks. Built on [anywidget](https://anywidget.dev).
 
@@ -29,7 +29,7 @@ uv pip install "anyimage[complete]"
 === "Jupyter"
 
     ```python
-    from anyimage import BioImageViewer
+    from anybioimage import BioImageViewer
     from bioio import BioImage
 
     viewer = BioImageViewer()
@@ -41,7 +41,7 @@ uv pip install "anyimage[complete]"
 
     ```python
     import marimo as mo
-    from anyimage import BioImageViewer
+    from anybioimage import BioImageViewer
     from bioio import BioImage
 
     viewer = BioImageViewer()

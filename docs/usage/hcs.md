@@ -5,7 +5,7 @@ anyimage supports OME-Zarr HCS (High-Content Screening) plates. The widget adds 
 ## Loading a plate
 
 ```python
-from anyimage import BioImageViewer
+from anybioimage import BioImageViewer
 
 viewer = BioImageViewer()
 viewer.set_plate("plate.zarr")
@@ -55,7 +55,7 @@ For custom folder structures (e.g. per-well TIFF directories), you can build the
 
 ```python
 import marimo as mo
-from anyimage import BioImageViewer
+from anybioimage import BioImageViewer
 from bioio import BioImage
 
 wells = ["A01", "A02", "B01"]
