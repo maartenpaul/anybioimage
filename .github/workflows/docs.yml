@@ -25,7 +25,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install docs dependencies
-        run: uv pip install --system mkdocs-material
+        run: uv pip install mkdocs-material
 
       - name: Build docs
         run: mkdocs build --strict
