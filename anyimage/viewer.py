@@ -479,15 +479,21 @@ class BioImageViewer(
                     chRow.appendChild(colorPicker);
                     layersPanel.appendChild(chRow);
 
-                    // Histogram canvas
+                    // Histogram canvas (aligned with slider tracks)
                     const histRow = document.createElement('div');
                     histRow.className = 'layer-item sub-item channel-contrast-row';
+                    const histSpacer = document.createElement('span');
+                    histSpacer.className = 'slider-label';
                     const histCanvas = document.createElement('canvas');
                     histCanvas.className = 'histogram-canvas';
                     histCanvas.dataset.channel = idx;
                     histCanvas.width = 256;
                     histCanvas.height = 40;
+                    const histEndSpacer = document.createElement('span');
+                    histEndSpacer.className = 'slider-value';
+                    histRow.appendChild(histSpacer);
                     histRow.appendChild(histCanvas);
+                    histRow.appendChild(histEndSpacer);
                     layersPanel.appendChild(histRow);
 
                     // Min slider row
@@ -2223,7 +2229,8 @@ class BioImageViewer(
         border-color: #999;
     }
     .histogram-canvas {
-        width: 100%;
+        flex: 1;
+        min-width: 0;
         height: 40px;
         border-radius: 4px;
         background: #f8f8f8;
