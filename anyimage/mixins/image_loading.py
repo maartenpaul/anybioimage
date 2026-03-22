@@ -680,6 +680,52 @@ class ImageLoadingMixin:
         self._image_array = np.mean(composite, axis=2).astype(np.uint8)
         self.image_data = array_to_base64(composite)
 
+    def _on_auto_contrast_request(self, change):
+        """Compute 2nd-98th percentile contrast for requested channel(s)."""
+        request = change.get("new")
+        if not request:
+            return
+
+        t = request.get("t", self.current_t)
+        z = request.get("z", self.current_z)
+        channel = request.get("channel", -1)
+        timestamp = request.get("timestamp")
+
+        def compute_range(ch_idx):
+            """Compute normalized percentile range for a single channel."""
+            if self._bioimage is not None:
+                ch_data = self._get_slice_cached(t, ch_idx, z)
+            elif hasattr(self, "_raw_numpy_array") and self._raw_numpy_array is not None:
+                ch_data = self._raw_numpy_array
+            else:
+                return {"min": 0.0, "max": 1.0}
+
+            p2, p98 = np.percentile(ch_data, [2, 98])
+            ch_settings = self._channel_settings[ch_idx]
+            data_min = ch_settings.get("data_min", float(ch_data.min()))
+            data_max = ch_settings.get("data_max", float(ch_data.max()))
+            span = data_max - data_min
+            if span > 0:
+                norm_min = (float(p2) - data_min) / span
+                norm_max = (float(p98) - data_min) / span
+            else:
+                norm_min, norm_max = 0.0, 1.0
+            return {"min": max(0.0, norm_min), "max": min(1.0, norm_max)}
+
+        if channel == -1:
+            ranges = {}
+            for i in range(len(self._channel_settings)):
+                ranges[str(i)] = compute_range(i)
+            self._auto_contrast_result = {"channel": -1, "ranges": ranges, "timestamp": timestamp}
+        else:
+            result = compute_range(channel)
+            self._auto_contrast_result = {
+                "channel": channel,
+                "min": result["min"],
+                "max": result["max"],
+                "timestamp": timestamp,
+            }
+
     def _on_channel_settings_change(self, change):
         """Observer callback when channel settings change."""
         # For numpy arrays (no BioImage), re-render directly

@@ -104,6 +104,10 @@ class BioImageViewer(
     # Viewport tile range sent by JS on pan/zoom — used to prioritise precompute
     _viewport_tiles = traitlets.Dict({}).tag(sync=True)
 
+    # Auto-contrast request/response
+    _auto_contrast_request = traitlets.Dict(allow_none=True).tag(sync=True)
+    _auto_contrast_result = traitlets.Dict(allow_none=True).tag(sync=True)
+
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self._mask_arrays = {}  # Store raw label arrays by mask id
@@ -140,6 +144,7 @@ class BioImageViewer(
         # Observer for tile-based loading
         self.observe(self._on_tile_request, names=["_tile_request"])
         self.observe(self._on_viewport_change, names=["_viewport_tiles"])
+        self.observe(self._on_auto_contrast_request, names=["_auto_contrast_request"])
 
     _esm = """
     async function loadImage(base64Data) {
@@ -352,8 +357,8 @@ class BioImageViewer(
         layersBtn.className = 'layers-btn';
         layersBtn.innerHTML = ICONS.layers + '<span>Layers</span>';
 
-        const layersDropdown = document.createElement('div');
-        layersDropdown.className = 'layers-dropdown';
+        const layersPanel = document.createElement('div');
+        layersPanel.className = 'layers-panel';
 
         function downloadMask(mask) {
             if (!mask.data) return;
@@ -384,8 +389,8 @@ class BioImageViewer(
             maskImg.src = 'data:image/png;base64,' + mask.data;
         }
 
-        function rebuildLayersDropdown() {
-            layersDropdown.innerHTML = '';
+        function rebuildLayersPanel() {
+            layersPanel.innerHTML = '';
 
             // Image layer
             const imageItem = document.createElement('div');
@@ -403,7 +408,7 @@ class BioImageViewer(
             imageLabel.textContent = 'Image';
             imageItem.appendChild(imageToggle);
             imageItem.appendChild(imageLabel);
-            layersDropdown.appendChild(imageItem);
+            layersPanel.appendChild(imageItem);
 
             // Channel controls (always shown under Image)
             const channelSettings = model.get('_channel_settings') || [];
@@ -447,11 +452,27 @@ class BioImageViewer(
                         colorDot.style.backgroundColor = colorPicker.value;
                     });
 
+                    const autoBtn = document.createElement('button');
+                    autoBtn.className = 'auto-contrast-btn';
+                    autoBtn.textContent = 'Auto';
+                    autoBtn.title = 'Auto-contrast (2nd–98th percentile)';
+                    autoBtn.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        model.set('_auto_contrast_request', {
+                            channel: idx,
+                            t: model.get('current_t'),
+                            z: model.get('current_z'),
+                            timestamp: Date.now()
+                        });
+                        model.save_changes();
+                    });
+
                     chRow.appendChild(chToggle);
                     chRow.appendChild(colorDot);
                     chRow.appendChild(chName);
+                    chRow.appendChild(autoBtn);
                     chRow.appendChild(colorPicker);
-                    layersDropdown.appendChild(chRow);
+                    layersPanel.appendChild(chRow);
 
                     // Min slider row
                     const minRow = document.createElement('div');
@@ -478,7 +499,7 @@ class BioImageViewer(
                     minRow.appendChild(minLabel);
                     minRow.appendChild(minSlider);
                     minRow.appendChild(minValue);
-                    layersDropdown.appendChild(minRow);
+                    layersPanel.appendChild(minRow);
 
                     // Max slider row
                     const maxRow = document.createElement('div');
@@ -505,7 +526,7 @@ class BioImageViewer(
                     maxRow.appendChild(maxLabel);
                     maxRow.appendChild(maxSlider);
                     maxRow.appendChild(maxValue);
-                    layersDropdown.appendChild(maxRow);
+                    layersPanel.appendChild(maxRow);
                 });
             }
 
@@ -514,12 +535,12 @@ class BioImageViewer(
             if (masks.length > 0) {
                 const maskDivider = document.createElement('div');
                 maskDivider.className = 'layer-divider';
-                layersDropdown.appendChild(maskDivider);
+                layersPanel.appendChild(maskDivider);
 
                 const maskHeader = document.createElement('div');
                 maskHeader.className = 'layer-header';
                 maskHeader.innerHTML = ICONS.mask + '<span>Masks</span>';
-                layersDropdown.appendChild(maskHeader);
+                layersPanel.appendChild(maskHeader);
 
                 for (const mask of masks) {
                     const maskItem = document.createElement('div');
@@ -569,7 +590,7 @@ class BioImageViewer(
                     maskItem.appendChild(maskToggle);
                     maskItem.appendChild(maskLabel);
                     maskItem.appendChild(maskActions);
-                    layersDropdown.appendChild(maskItem);
+                    layersPanel.appendChild(maskItem);
 
                     // Opacity slider for this mask
                     const opacityItem = document.createElement('div');
@@ -588,7 +609,7 @@ class BioImageViewer(
                         model.save_changes();
                     });
                     opacityItem.appendChild(opacitySlider);
-                    layersDropdown.appendChild(opacityItem);
+                    layersPanel.appendChild(opacityItem);
 
                     // Contours toggle
                     const contoursItem = document.createElement('div');
@@ -607,31 +628,31 @@ class BioImageViewer(
                     contoursLabel.textContent = 'Contours only';
                     contoursItem.appendChild(contoursCheck);
                     contoursItem.appendChild(contoursLabel);
-                    layersDropdown.appendChild(contoursItem);
+                    layersPanel.appendChild(contoursItem);
                 }
             }
 
             // Annotations section
             const annotDivider = document.createElement('div');
             annotDivider.className = 'layer-divider';
-            layersDropdown.appendChild(annotDivider);
+            layersPanel.appendChild(annotDivider);
 
             const annotHeader = document.createElement('div');
             annotHeader.className = 'layer-header';
             annotHeader.textContent = 'Annotations';
-            layersDropdown.appendChild(annotHeader);
+            layersPanel.appendChild(annotHeader);
 
             // Rectangles
             const rectItem = createAnnotationLayerItem('Rectangles', 'rois_visible', 'roi_color');
-            layersDropdown.appendChild(rectItem);
+            layersPanel.appendChild(rectItem);
 
             // Polygons
             const polyItem = createAnnotationLayerItem('Polygons', 'polygons_visible', 'polygon_color');
-            layersDropdown.appendChild(polyItem);
+            layersPanel.appendChild(polyItem);
 
             // Points
             const pointItem = createAnnotationLayerItem('Points', 'points_visible', 'point_color');
-            layersDropdown.appendChild(pointItem);
+            layersPanel.appendChild(pointItem);
         }
 
         function createAnnotationLayerItem(label, visibleProp, colorProp) {
@@ -666,23 +687,18 @@ class BioImageViewer(
             return item;
         }
 
-        rebuildLayersDropdown();
+        rebuildLayersPanel();
 
         layersGroup.appendChild(layersBtn);
-        layersGroup.appendChild(layersDropdown);
 
-        let dropdownOpen = false;
+        let panelOpen = false;
         layersBtn.addEventListener('click', (e) => {
             e.stopPropagation();
-            dropdownOpen = !dropdownOpen;
-            if (dropdownOpen) rebuildLayersDropdown();
-            layersDropdown.classList.toggle('open', dropdownOpen);
+            panelOpen = !panelOpen;
+            if (panelOpen) rebuildLayersPanel();
+            layersPanel.classList.toggle('open', panelOpen);
+            layersBtn.classList.toggle('active', panelOpen);
         });
-        document.addEventListener('click', () => {
-            dropdownOpen = false;
-            layersDropdown.classList.remove('open');
-        });
-        layersDropdown.addEventListener('click', (e) => e.stopPropagation());
 
         toolbar.appendChild(toolGroup);
         toolbar.appendChild(sep1);
@@ -930,8 +946,13 @@ class BioImageViewer(
         statusBar.appendChild(zoomStatus);
         statusBar.appendChild(dimStatus);
 
+        const contentArea = document.createElement('div');
+        contentArea.className = 'content-area';
+        contentArea.appendChild(canvasWrapper);
+        contentArea.appendChild(layersPanel);
+
         container.appendChild(toolbar);
-        container.appendChild(canvasWrapper);
+        container.appendChild(contentArea);
         container.appendChild(dimControls);
         container.appendChild(statusBar);
         el.appendChild(container);
@@ -1633,7 +1654,28 @@ class BioImageViewer(
             clearTileCache();  // Contrast/color changed
             updateDimStatus();
             renderCanvas();
-            if (dropdownOpen) rebuildLayersDropdown();
+            if (panelOpen) rebuildLayersPanel();
+        });
+        // Auto-contrast response handler
+        model.on('change:_auto_contrast_result', () => {
+            const result = model.get('_auto_contrast_result');
+            if (!result) return;
+            const settings = [...model.get('_channel_settings')];
+            if (result.channel === -1) {
+                for (const [idx, range] of Object.entries(result.ranges)) {
+                    const i = parseInt(idx);
+                    if (i < settings.length) {
+                        settings[i] = { ...settings[i], min: range.min, max: range.max };
+                    }
+                }
+            } else {
+                const i = result.channel;
+                if (i < settings.length) {
+                    settings[i] = { ...settings[i], min: result.min, max: result.max };
+                }
+            }
+            model.set('_channel_settings', settings);
+            model.save_changes();
         });
         model.on('change:dim_z', rebuildDimControls);
         model.on('change:scenes', rebuildDimControls);
@@ -1741,7 +1783,6 @@ class BioImageViewer(
         height: 18px;
     }
     .layers-group {
-        position: relative;
         margin-left: auto;
     }
     .layers-btn {
@@ -1763,24 +1804,22 @@ class BioImageViewer(
         width: 16px;
         height: 16px;
     }
-    .layers-dropdown {
-        position: absolute;
-        top: 100%;
-        right: 0;
-        margin-top: 4px;
-        min-width: 220px;
-        max-height: 400px;
-        overflow-y: auto;
-        background: #fff;
-        border: 1px solid #e0e0e0;
-        border-radius: 8px;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-        padding: 8px 0;
-        display: none;
-        z-index: 100;
+    .content-area {
+        display: flex;
+        flex-direction: row;
     }
-    .layers-dropdown.open {
-        display: block;
+    .layers-panel {
+        width: 0;
+        overflow: hidden;
+        background: #fff;
+        border-left: 1px solid #e0e0e0;
+        transition: width 0.15s ease;
+        overflow-y: auto;
+        padding: 0;
+    }
+    .layers-panel.open {
+        width: 260px;
+        padding: 8px 0;
     }
     .layer-header {
         display: flex;
@@ -1887,18 +1926,20 @@ class BioImageViewer(
     }
     .opacity-item input[type="range"] {
         width: 100%;
-        height: 4px;
-        border-radius: 2px;
+        height: 6px;
+        border-radius: 3px;
         -webkit-appearance: none;
         background: #e0e0e0;
     }
     .opacity-item input[type="range"]::-webkit-slider-thumb {
         -webkit-appearance: none;
-        width: 14px;
-        height: 14px;
+        width: 18px;
+        height: 18px;
         border-radius: 50%;
         background: #0d6efd;
         cursor: pointer;
+        border: 2px solid #fff;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.3);
     }
     .slider-item {
         flex-direction: column;
@@ -1912,30 +1953,34 @@ class BioImageViewer(
     }
     .adjustment-slider {
         width: 100%;
-        height: 4px;
-        border-radius: 2px;
+        height: 6px;
+        border-radius: 3px;
         -webkit-appearance: none;
         background: linear-gradient(to right, #666 0%, #e0e0e0 50%, #fff 100%);
     }
     .adjustment-slider::-webkit-slider-thumb {
         -webkit-appearance: none;
-        width: 14px;
-        height: 14px;
+        width: 18px;
+        height: 18px;
         border-radius: 50%;
         background: #0d6efd;
         cursor: pointer;
+        border: 2px solid #fff;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.3);
     }
     .adjustment-slider::-moz-range-thumb {
-        width: 14px;
-        height: 14px;
+        width: 18px;
+        height: 18px;
         border-radius: 50%;
         background: #0d6efd;
         cursor: pointer;
-        border: none;
+        border: 2px solid #fff;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.3);
     }
     .canvas-wrapper {
         position: relative;
-        width: 100%;
+        flex: 1;
+        min-width: 0;
         height: 800px;
         overflow: hidden;
     }
@@ -1995,26 +2040,29 @@ class BioImageViewer(
     }
     .dim-slider {
         width: 100px;
-        height: 4px;
-        border-radius: 2px;
+        height: 6px;
+        border-radius: 3px;
         -webkit-appearance: none;
         background: #ddd;
     }
     .dim-slider::-webkit-slider-thumb {
         -webkit-appearance: none;
-        width: 14px;
-        height: 14px;
+        width: 18px;
+        height: 18px;
         border-radius: 50%;
         background: #0d6efd;
         cursor: pointer;
+        border: 2px solid #fff;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.3);
     }
     .dim-slider::-moz-range-thumb {
-        width: 14px;
-        height: 14px;
+        width: 18px;
+        height: 18px;
         border-radius: 50%;
         background: #0d6efd;
         cursor: pointer;
-        border: none;
+        border: 2px solid #fff;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.3);
     }
     .dim-value {
         font-size: 11px;
@@ -2063,6 +2111,21 @@ class BioImageViewer(
         min-width: 32px;
         text-align: right;
     }
+    .auto-contrast-btn {
+        padding: 2px 8px;
+        font-size: 11px;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        background: #f8f8f8;
+        color: #555;
+        cursor: pointer;
+        white-space: nowrap;
+        margin-left: auto;
+    }
+    .auto-contrast-btn:hover {
+        background: #e8e8e8;
+        border-color: #999;
+    }
 
     @media (prefers-color-scheme: dark) {
         .bioimage-viewer {
@@ -2094,9 +2157,18 @@ class BioImageViewer(
         .layers-btn:hover {
             background: #3d3d3d;
         }
-        .layers-dropdown {
+        .layers-panel {
             background: #2d2d2d;
             border-color: #404040;
+        }
+        .auto-contrast-btn {
+            background: #3d3d3d;
+            border-color: #555;
+            color: #aaa;
+        }
+        .auto-contrast-btn:hover {
+            background: #4d4d4d;
+            border-color: #777;
         }
         .layer-header {
             color: #888;
