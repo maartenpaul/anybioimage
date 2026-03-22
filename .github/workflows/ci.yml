@@ -16,7 +16,9 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: uv pip install -e ".[all]"
+        run: |
+          uv venv
+          uv pip install -e ".[all]"
 
       - name: Lint (ruff)
         run: uv run ruff check anyimage/ --output-format=github
@@ -39,7 +41,9 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Install dependencies
-        run: uv pip install -e ".[all]"
+        run: |
+          uv venv
+          uv pip install -e ".[all]"
 
       - name: Run tests
         run: uv run pytest tests/ -v
