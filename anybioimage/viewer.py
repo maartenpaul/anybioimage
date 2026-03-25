@@ -1,6 +1,5 @@
 """BioImageViewer - Main anywidget for viewing bioimages with multi-dimensional support."""
 
-import threading
 from concurrent.futures import ThreadPoolExecutor
 
 import anywidget
@@ -126,14 +125,7 @@ class BioImageViewer(
         self._current_well_path = None
         self._current_well_fov_paths = []
         self._full_array = None  # Full TCZYX array when image fits in RAM
-        self._slice_cache = {}  # LRU cache for slice data: (T, C, Z) -> np.ndarray
-        self._slice_cache_max_size = 128  # Max number of cached slices
-        self._composite_cache = {}  # (t, z, res) -> uint8 RGB composite of full slice
-        self._composite_cache_max_size = 64  # Max cached composites (overridden dynamically in _set_bioimage)
-        self._composite_cache_lock = threading.Lock()
-        self._tile_cache = {}  # (t, z, tx, ty, res) -> base64 PNG
-        self._tile_cache_max_size = 2048  # Max cached tiles (~400MB for your dataset)
-        self._tile_cache_lock = threading.Lock()
+        self._init_image_caches()  # _slice_cache, _composite_cache, _tile_cache (_LRUCache instances)
         self._prefetch_executor = ThreadPoolExecutor(max_workers=6)  # Background prefetching
         self._precompute_event = None   # threading.Event to cancel background precompute
         self._precompute_future = None  # Future for the running precompute task
@@ -479,10 +471,23 @@ class BioImageViewer(
                         model.save_changes();
                     });
 
+                    const invertBtn = document.createElement('button');
+                    invertBtn.className = 'auto-contrast-btn' + (ch.inverted ? ' active' : '');
+                    invertBtn.textContent = 'Inv';
+                    invertBtn.title = 'Invert LUT (brightfield / phase contrast)';
+                    invertBtn.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        const settings = [...model.get('_channel_settings')];
+                        settings[idx] = { ...settings[idx], inverted: !settings[idx].inverted };
+                        model.set('_channel_settings', settings);
+                        model.save_changes();
+                    });
+
                     chRow.appendChild(chToggle);
                     chRow.appendChild(colorDot);
                     chRow.appendChild(chName);
                     chRow.appendChild(autoBtn);
+                    chRow.appendChild(invertBtn);
                     chRow.appendChild(colorPicker);
                     layersPanel.appendChild(chRow);
 
@@ -543,26 +548,32 @@ class BioImageViewer(
                     maxRow.appendChild(maxValue);
                     layersPanel.appendChild(maxRow);
 
-                    // Add clamped event listeners (min cannot exceed max, max cannot go below min)
+                    // Slider listeners: input = immediate visual feedback only, change = model sync on release
                     minSlider.addEventListener('input', () => {
                         let val = parseInt(minSlider.value);
                         const maxVal = parseInt(maxSlider.value);
                         if (val >= maxVal) { val = maxVal - 1; minSlider.value = val; }
+                        minValue.textContent = val + '%';
+                    });
+                    minSlider.addEventListener('change', () => {
+                        const val = parseInt(minSlider.value);
                         const settings = [...model.get('_channel_settings')];
                         settings[idx] = { ...settings[idx], min: val / 100 };
                         model.set('_channel_settings', settings);
                         model.save_changes();
-                        minValue.textContent = val + '%';
                     });
                     maxSlider.addEventListener('input', () => {
                         let val = parseInt(maxSlider.value);
                         const minVal = parseInt(minSlider.value);
                         if (val <= minVal) { val = minVal + 1; maxSlider.value = val; }
+                        maxValue.textContent = val + '%';
+                    });
+                    maxSlider.addEventListener('change', () => {
+                        const val = parseInt(maxSlider.value);
                         const settings = [...model.get('_channel_settings')];
                         settings[idx] = { ...settings[idx], max: val / 100 };
                         model.set('_channel_settings', settings);
                         model.save_changes();
-                        maxValue.textContent = val + '%';
                     });
                 });
             }
@@ -769,8 +780,10 @@ class BioImageViewer(
             const maxLog = Math.max(...logCounts);
             if (maxLog === 0) return;
 
-            ctx2.fillStyle = color + '55';  // 33% opacity via hex alpha
-            ctx2.strokeStyle = color + 'aa';
+            // White channels (#ffffff) are invisible on a dark background — use light gray instead
+            const drawColor = (color.toLowerCase() === '#ffffff') ? '#aaaaaa' : color;
+            ctx2.fillStyle = drawColor + '55';  // 33% opacity via hex alpha
+            ctx2.strokeStyle = drawColor + 'cc';
             ctx2.lineWidth = 1;
             ctx2.beginPath();
             ctx2.moveTo(0, h);
@@ -1768,13 +1781,19 @@ class BioImageViewer(
                 for (const [idx, range] of Object.entries(result.ranges)) {
                     const i = parseInt(idx);
                     if (i < settings.length) {
-                        settings[i] = { ...settings[i], min: range.min, max: range.max };
+                        const update = { min: range.min, max: range.max };
+                        if (range.data_min !== undefined && range.data_min !== null) update.data_min = range.data_min;
+                        if (range.data_max !== undefined && range.data_max !== null) update.data_max = range.data_max;
+                        settings[i] = { ...settings[i], ...update };
                     }
                 }
             } else {
                 const i = result.channel;
                 if (i < settings.length) {
-                    settings[i] = { ...settings[i], min: result.min, max: result.max };
+                    const update = { min: result.min, max: result.max };
+                    if (result.data_min !== undefined && result.data_min !== null) update.data_min = result.data_min;
+                    if (result.data_max !== undefined && result.data_max !== null) update.data_max = result.data_max;
+                    settings[i] = { ...settings[i], ...update };
                 }
             }
             model.set('_channel_settings', settings);
@@ -2238,6 +2257,11 @@ class BioImageViewer(
         background: #e8e8e8;
         border-color: #999;
     }
+    .auto-contrast-btn.active {
+        background: #4a90d9;
+        border-color: #2e6fad;
+        color: #fff;
+    }
     .histogram-canvas {
         flex: 1;
         min-width: 0;
@@ -2288,6 +2312,11 @@ class BioImageViewer(
         .auto-contrast-btn:hover {
             background: #4d4d4d;
             border-color: #777;
+        }
+        .auto-contrast-btn.active {
+            background: #2e6fad;
+            border-color: #1a4f8a;
+            color: #fff;
         }
         .histogram-canvas {
             background: #333;

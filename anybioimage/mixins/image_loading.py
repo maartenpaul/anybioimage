@@ -19,6 +19,54 @@ from ..utils import (
 )
 
 
+class _LRUCache:
+    """Thread-safe LRU cache backed by an insertion-ordered dict.
+
+    All operations acquire an internal lock, so callers never need external locking.
+    Cache misses return None; put() handles eviction at capacity.
+    """
+
+    def __init__(self, maxsize: int) -> None:
+        self.maxsize = maxsize
+        self._data: dict = {}
+        self._lock = threading.Lock()
+
+    def get(self, key):
+        """Return cached value or None on miss. Promotes hit to MRU position."""
+        with self._lock:
+            if key not in self._data:
+                return None
+            value = self._data.pop(key)   # remove from current position
+            self._data[key] = value        # reinsert at end = MRU
+            return value
+
+    def put(self, key, value) -> None:
+        """Insert value at MRU position, evicting LRU entry if at capacity."""
+        with self._lock:
+            if key in self._data:
+                self._data.pop(key)       # remove stale entry first
+            elif len(self._data) >= self.maxsize:
+                self._data.pop(next(iter(self._data)))  # evict LRU (front)
+            self._data[key] = value
+
+    def resize(self, maxsize: int) -> None:
+        """Update capacity limit (excess entries evicted lazily on next put)."""
+        with self._lock:
+            self.maxsize = maxsize
+
+    def clear(self) -> None:
+        with self._lock:
+            self._data.clear()
+
+    def __contains__(self, key) -> bool:
+        with self._lock:
+            return key in self._data
+
+    def __len__(self) -> int:
+        with self._lock:
+            return len(self._data)
+
+
 _THUMBNAIL_MAX = 512  # Max dimension for tile-mode thumbnail (used as baseImage fallback)
 
 
@@ -37,31 +85,17 @@ def _thumbnail(arr: np.ndarray, max_size: int = _THUMBNAIL_MAX) -> np.ndarray:
 class ImageLoadingMixin:
     """Mixin class providing image loading functionality for BioImageViewer.
 
-    This mixin handles loading images from numpy arrays and BioImage objects,
-    including support for multi-dimensional data (5D: TCZYX), lazy loading,
-    tile-based rendering, and slice caching.
-
-    Attributes expected to be defined by the main class:
-        - _bioimage: Reference to BioImage object for lazy loading
-        - _slice_cache: LRU cache for slice data
-        - _slice_cache_max_size: Max number of cached slices
-        - _tile_cache: Cache for rendered tiles
-        - _tile_cache_max_size: Max cached tiles
-        - _prefetch_executor: ThreadPoolExecutor for background prefetching
-        - _image_array: Current image array (for SAM integration)
-        - _channel_settings: List of channel settings dicts
-        - dim_t, dim_c, dim_z: Dimension sizes
-        - current_t, current_c, current_z: Current positions
-        - current_resolution: Current resolution level
-        - width, height: Image dimensions
-        - image_data: Base64 encoded image data (traitlet)
-        - _preview_mode: Preview mode flag (traitlet)
-        - _tile_size: Tile size (traitlet)
-        - _tiles_data: Tiles data dict (traitlet)
-        - resolution_levels: List of resolution levels (traitlet)
-        - scenes: List of scenes (traitlet)
-        - current_scene: Current scene name (traitlet)
+    Caches (all _LRUCache instances, initialised by _init_image_caches):
+        _slice_cache:     (T, C, Z) → 2D np.ndarray raw slice data
+        _composite_cache: (T, Z, res) → uint8 RGB composite array
+        _tile_cache:      (T, Z, tx, ty, res) → {w, h, data} tile dict
     """
+
+    def _init_image_caches(self) -> None:
+        """Initialise the three LRU caches. Called from BioImageViewer.__init__."""
+        self._slice_cache = _LRUCache(128)
+        self._composite_cache = _LRUCache(64)
+        self._tile_cache = _LRUCache(2048)
 
     def set_image(self, data):
         """Set the base image from a numpy array or BioImage object.
@@ -124,9 +158,19 @@ class ImageLoadingMixin:
     def _set_bioimage(self, img):
         """Set the base image from a BioImage object with lazy loading support.
 
+        Clears all caches and cancels any running precompute before loading the new image,
+        so stale entries from a previous image can never bleed through.
+
         Args:
             img: A BioImage object from bioio
         """
+        # Cancel any running precompute and flush stale cache entries from the previous image
+        if getattr(self, "_precompute_event", None) is not None:
+            self._precompute_event.set()
+        self._slice_cache.clear()
+        self._composite_cache.clear()
+        self._tile_cache.clear()
+
         self._bioimage = img
         self._full_array = None
 
@@ -185,6 +229,8 @@ class ImageLoadingMixin:
                 vmin = max(0.0, (display_lo - abs_min) / span) if span > 0 else 0.0
                 vmax = min(1.0, (display_hi - abs_min) / span) if span > 0 else 1.0
                 name = channel_names[i] if i < len(channel_names) else f"Channel {i}"
+                _INVERTED_KEYWORDS = ("bright", "phase", "trans", "dic", " bf", "bf ")
+                inverted = any(kw in name.lower() for kw in _INVERTED_KEYWORDS)
                 channel_settings.append({
                     "name": name,
                     "color": "#ffffff" if self.dim_c == 1 else CHANNEL_COLORS[i % len(CHANNEL_COLORS)],
@@ -193,6 +239,7 @@ class ImageLoadingMixin:
                     "max": vmax,
                     "data_min": abs_min,
                     "data_max": abs_max,
+                    "inverted": inverted,
                 })
             self._channel_settings = channel_settings
 
@@ -237,7 +284,7 @@ class ImageLoadingMixin:
         bytes_per_composite = self.height * self.width * 3
         mem_limit = 512 * 1024 * 1024  # 512 MB budget
         max_by_memory = mem_limit // max(bytes_per_composite, 1)
-        self._composite_cache_max_size = max(64, min(self.dim_t * self.dim_z, max_by_memory, 1024))
+        self._composite_cache.resize(max(64, min(self.dim_t * self.dim_z, max_by_memory, 1024)))
 
         self._update_slice()
         self._start_precompute()
@@ -318,51 +365,32 @@ class ImageLoadingMixin:
         return self._pyramid[level]
 
     def _get_slice_cached(self, t: int, c: int, z: int) -> np.ndarray:
-        """Get slice data from cache or load from disk.
-
-        Args:
-            t: Time index
-            c: Channel index
-            z: Z-slice index
-
-        Returns:
-            2D numpy array of slice data
-        """
+        """Get slice data from cache or load from disk."""
         if self._full_array is not None:
-            pyramid = getattr(self, "_pyramid", None)
-            pyramid_has_native = getattr(self, "_pyramid_has_native", False)
-            if pyramid is not None and not pyramid_has_native:
+            if self._pyramid is not None and not self._pyramid_has_native:
                 return self._get_pyramid_level(self.current_resolution)[t, c, z]
             return self._full_array[t, c, z]
 
         cache_key = (t, c, z)
-        if cache_key in self._slice_cache:
-            return self._slice_cache[cache_key]
+        cached = self._slice_cache.get(cache_key)
+        if cached is not None:
+            return cached
 
+        t0 = time.perf_counter()
         ch_data = self._bioimage.get_image_dask_data("YX", T=t, C=c, Z=z).compute()
+        elapsed = (time.perf_counter() - t0) * 1000
+        if elapsed > 200:
+            print(f"[Py] S3 fetch {elapsed:.0f}ms T={t} C={c} Z={z}")
 
-        if len(self._slice_cache) >= self._slice_cache_max_size:
-            del self._slice_cache[next(iter(self._slice_cache))]
-
-        self._slice_cache[cache_key] = ch_data
+        self._slice_cache.put(cache_key, ch_data)
         return ch_data
 
     def _get_composite_slice(self, t: int, z: int) -> np.ndarray | None:
-        """Return the full composited RGB slice for (t, z), using a cache.
-
-        Compositing once per slice is far faster than compositing per tile,
-        since normalize/blend only runs once regardless of how many tiles are requested.
-        """
-        composite_cache: dict = getattr(self, "_composite_cache", {})
-        composite_cache_lock = getattr(self, "_composite_cache_lock", None)
+        """Return the full composited RGB slice for (t, z), using a cache."""
         cache_key = (t, z, self.current_resolution)
-
-        if composite_cache_lock is not None:
-            with composite_cache_lock:
-                if cache_key in composite_cache:
-                    return composite_cache[cache_key]
-        elif cache_key in composite_cache:
-            return composite_cache[cache_key]
+        cached = self._composite_cache.get(cache_key)
+        if cached is not None:
+            return cached
 
         visible_indices = [
             i for i, ch in enumerate(self._channel_settings)
@@ -377,7 +405,7 @@ class ImageLoadingMixin:
             futures = {executor.submit(self._get_slice_cached, t, i, z): i for i in visible_indices}
             channel_data = {futures[f]: f.result() for f in futures}
 
-        visible_channels, colors, mins, maxs, data_mins, data_maxs = [], [], [], [], [], []
+        visible_channels, colors, mins, maxs, data_mins, data_maxs, inverteds = [], [], [], [], [], [], []
         for i in visible_indices:
             ch_data = channel_data[i]
             if ch_data is None or ch_data.size == 0:
@@ -389,46 +417,21 @@ class ImageLoadingMixin:
             maxs.append(ch_settings.get("max", 1.0))
             data_mins.append(ch_settings.get("data_min"))
             data_maxs.append(ch_settings.get("data_max"))
+            inverteds.append(ch_settings.get("inverted", False))
 
         if not visible_channels:
             return None
 
-        result = composite_channels(visible_channels, colors, mins, maxs, data_mins, data_maxs)
-
-        composite_cache_max: int = getattr(self, "_composite_cache_max_size", 64)
-        if composite_cache_lock is not None:
-            with composite_cache_lock:
-                if cache_key not in composite_cache:  # re-check inside lock
-                    if len(composite_cache) >= composite_cache_max:
-                        del composite_cache[next(iter(composite_cache))]
-                    composite_cache[cache_key] = result
-        else:
-            if len(composite_cache) >= composite_cache_max:
-                del composite_cache[next(iter(composite_cache))]
-            composite_cache[cache_key] = result
+        result = composite_channels(visible_channels, colors, mins, maxs, data_mins, data_maxs, inverteds)
+        self._composite_cache.put(cache_key, result)
         return result
 
     def _get_tile(self, t: int, z: int, tile_x: int, tile_y: int):
-        """Get a single tile as raw RGBA bytes (much faster than PNG).
-
-        Args:
-            t: Time index
-            z: Z-slice index
-            tile_x: Tile X coordinate
-            tile_y: Tile Y coordinate
-
-        Returns:
-            Dictionary with tile data {w, h, data} or None if tile is empty
-        """
+        """Get a single tile as raw RGBA bytes."""
         cache_key = (t, z, tile_x, tile_y, self.current_resolution)
-        tile_cache_lock = getattr(self, "_tile_cache_lock", None)
-
-        if tile_cache_lock is not None:
-            with tile_cache_lock:
-                if cache_key in self._tile_cache:
-                    return self._tile_cache[cache_key]
-        elif cache_key in self._tile_cache:
-            return self._tile_cache[cache_key]
+        cached = self._tile_cache.get(cache_key)
+        if cached is not None:
+            return cached
 
         y_start = tile_y * self._tile_size
         x_start = tile_x * self._tile_size
@@ -446,50 +449,38 @@ class ImageLoadingMixin:
             return None
         h, w = region.shape[:2]
 
-        use_jpeg = getattr(self, "use_jpeg_tiles", False)
-        if use_jpeg:
+        if getattr(self, "use_jpeg_tiles", False):
             from io import BytesIO
             from PIL import Image as PILImage
             buf = BytesIO()
             PILImage.fromarray(region, mode="RGB").save(buf, format="JPEG", quality=85, optimize=False)
             tile_data = {"w": w, "h": h, "data": base64.b64encode(buf.getvalue()).decode("utf-8"), "fmt": "jpeg"}
         else:
-            # Convert RGB to RGBA (add alpha channel)
             rgba = np.zeros((h, w, 4), dtype=np.uint8)
             rgba[:, :, :3] = region
             rgba[:, :, 3] = 255
-            # Raw bytes are ~10x faster than PNG encoding
             tile_data = {"w": w, "h": h, "data": base64.b64encode(rgba.tobytes()).decode("utf-8")}
 
-        if tile_cache_lock is not None:
-            with tile_cache_lock:
-                if cache_key not in self._tile_cache:  # re-check inside lock
-                    if len(self._tile_cache) >= self._tile_cache_max_size:
-                        del self._tile_cache[next(iter(self._tile_cache))]
-                    self._tile_cache[cache_key] = tile_data
-        else:
-            if len(self._tile_cache) >= self._tile_cache_max_size:
-                del self._tile_cache[next(iter(self._tile_cache))]
-            self._tile_cache[cache_key] = tile_data
-
+        self._tile_cache.put(cache_key, tile_data)
         return tile_data
 
     def _on_tile_request(self, change):
-        """Handle tile request from JavaScript.
-
-        Args:
-            change: Traitlet change dict with 'new' containing the tile request
-        """
+        """Handle tile request from JavaScript."""
         start_total = time.perf_counter()
 
         request = change.get("new")
         if not request or self._bioimage is None:
             return
 
-        t = request.get("t", self.current_t)
-        z = request.get("z", self.current_z)
+        # Clamp to valid range — JS may send stale values from a previous image load
+        t = min(request.get("t", self.current_t), self.dim_t - 1)
+        z = min(request.get("z", self.current_z), self.dim_z - 1)
         tiles_data = {}
         num_cached, num_generated = 0, 0
+
+        composite_cached = (t, z, self.current_resolution) in self._composite_cache
+        if not composite_cached:
+            print(f"[Py] Composite miss T={t} Z={z}")
 
         for tile_info in request.get("tiles", []):
             tx, ty = tile_info.get("tx"), tile_info.get("ty")
@@ -509,13 +500,7 @@ class ImageLoadingMixin:
         self._tiles_data = tiles_data
 
     def _prefetch_slice(self, t: int, c: int, z: int) -> None:
-        """Prefetch a slice into the cache (background thread).
-
-        Args:
-            t: Time index
-            c: Channel index
-            z: Z-slice index
-        """
+        """Prefetch a slice into the cache (background thread)."""
         if self._bioimage is None:
             return
         cache_key = (t, c, z)
@@ -523,8 +508,7 @@ class ImageLoadingMixin:
             return
         try:
             ch_data = self._bioimage.get_image_dask_data("YX", T=t, C=c, Z=z).compute()
-            if len(self._slice_cache) < self._slice_cache_max_size:
-                self._slice_cache[cache_key] = ch_data
+            self._slice_cache.put(cache_key, ch_data)
         except Exception:
             pass
 
@@ -662,7 +646,7 @@ class ImageLoadingMixin:
 
         Slices are sorted nearest-first so the pool prioritises the most useful frames.
         """
-        _REMOTE_PRECOMPUTE_WORKERS = 4
+        _REMOTE_PRECOMPUTE_WORKERS = 2  # 2 workers × C channels each = 4 S3 GETs; keeps bandwidth for foreground requests
 
         if self._bioimage is None:
             return
@@ -789,13 +773,13 @@ class ImageLoadingMixin:
                     self.image_data = ""
             else:
                 # Non-tile mode: compose channels manually for non-tile rendering path
-                visible_channels, colors, mins, maxs, data_mins, data_maxs = [], [], [], [], [], []
-
+                visible_channels, colors, mins, maxs, data_mins, data_maxs, inverteds = [], [], [], [], [], [], []
                 for i, ch_settings in enumerate(self._channel_settings):
                     if ch_settings.get("visible", True):
                         cache_key = (t, i, z)
-                        if cache_key in self._slice_cache:
-                            ch_data = self._slice_cache[cache_key]
+                        cached = self._slice_cache.get(cache_key)  # LRU promote on hit
+                        if cached is not None:
+                            ch_data = cached
                         elif preview_mode:
                             self._prefetch_executor.submit(self._prefetch_slice, t, i, z)
                             continue
@@ -808,6 +792,7 @@ class ImageLoadingMixin:
                         maxs.append(ch_settings.get("max", 1.0))
                         data_mins.append(ch_settings.get("data_min"))
                         data_maxs.append(ch_settings.get("data_max"))
+                        inverteds.append(ch_settings.get("inverted", False))
 
                 if not visible_channels:
                     if not preview_mode:
@@ -825,10 +810,12 @@ class ImageLoadingMixin:
                         normalized = normalized.astype(np.float64) / 255.0
                         normalized = np.clip((normalized - vmin) / (vmax - vmin + 1e-10), 0, 1)
                         normalized = (normalized * 255).astype(np.uint8)
+                    if inverteds and inverteds[0]:
+                        normalized = 255 - normalized
                     self._image_array = normalized
                     self.image_data = array_to_base64(normalized)
                 else:
-                    composite = composite_channels(visible_channels, colors, mins, maxs, data_mins, data_maxs)
+                    composite = composite_channels(visible_channels, colors, mins, maxs, data_mins, data_maxs, inverteds)
                     self._image_array = np.mean(composite, axis=2).astype(np.uint8)
                     self.image_data = array_to_base64(composite)
 
@@ -893,15 +880,18 @@ class ImageLoadingMixin:
 
             p2, p98 = np.percentile(ch_data, [2, 98])
             ch_settings = self._channel_settings[ch_idx]
-            data_min = ch_settings.get("data_min", float(ch_data.min()))
-            data_max = ch_settings.get("data_max", float(ch_data.max()))
+            slice_min = float(ch_data.min())
+            slice_max = float(ch_data.max())
+            # Expand stored data range to include current slice — remote sampling may miss out-of-range T positions
+            data_min = min(ch_settings.get("data_min", slice_min), slice_min)
+            data_max = max(ch_settings.get("data_max", slice_max), slice_max)
             span = data_max - data_min
             if span > 0:
-                norm_min = (float(p2) - data_min) / span
-                norm_max = (float(p98) - data_min) / span
+                norm_min = max(0.0, min(1.0, (float(p2) - data_min) / span))
+                norm_max = max(0.0, min(1.0, (float(p98) - data_min) / span))
             else:
                 norm_min, norm_max = 0.0, 1.0
-            return {"min": max(0.0, norm_min), "max": min(1.0, norm_max)}
+            return {"min": norm_min, "max": norm_max, "data_min": data_min, "data_max": data_max}
 
         if channel == -1:
             ranges = {}
@@ -914,6 +904,8 @@ class ImageLoadingMixin:
                 "channel": channel,
                 "min": result["min"],
                 "max": result["max"],
+                "data_min": result.get("data_min"),
+                "data_max": result.get("data_max"),
                 "timestamp": timestamp,
             }
 
@@ -953,7 +945,6 @@ class ImageLoadingMixin:
 
     def _on_channel_settings_change(self, change):
         """Observer callback when channel settings change."""
-        # For numpy arrays (no BioImage), re-render directly
         if self._bioimage is None:
             self._update_numpy_image()
             return
@@ -961,25 +952,19 @@ class ImageLoadingMixin:
         if getattr(self, "_precompute_event", None) is not None:
             self._precompute_event.set()
         self._tile_cache.clear()
-        composite_cache = getattr(self, "_composite_cache", None)
-        if isinstance(composite_cache, dict):
-            composite_cache.clear()
+        self._composite_cache.clear()
         self._update_slice()
         self._start_precompute()
 
     def _clear_caches(self, clear_full_array: bool = True):
         """Clear all caches. Pass clear_full_array=False to preserve the eager-loaded array."""
         self._slice_cache.clear()
+        self._composite_cache.clear()
         self._tile_cache.clear()
-        composite_cache = getattr(self, "_composite_cache", None)
-        if isinstance(composite_cache, dict):
-            composite_cache.clear()
         if clear_full_array:
             self._full_array = None
-        # Reset materialised synthetic pyramid levels (but keep level 0 = _full_array)
-        pyramid = getattr(self, "_pyramid", None)
-        if pyramid is not None and len(pyramid) > 1:
-            pyramid[1:] = [None] * (len(pyramid) - 1)
+        if self._pyramid is not None and len(self._pyramid) > 1:
+            self._pyramid[1:] = [None] * (len(self._pyramid) - 1)
 
     def _on_viewport_change(self, change):
         """Restart precompute when the user pans or zooms to a new viewport."""
@@ -1006,7 +991,7 @@ class ImageLoadingMixin:
                 self.width = arr.shape[4]
                 bytes_per_composite = self.height * self.width * 3
                 max_by_memory = (512 * 1024 * 1024) // max(bytes_per_composite, 1)
-                self._composite_cache_max_size = max(64, min(self.dim_t * self.dim_z, max_by_memory, 1024))
+                self._composite_cache.resize(max(64, min(self.dim_t * self.dim_z, max_by_memory, 1024)))
                 self._update_slice()
                 self._start_precompute()
             except Exception as e:
@@ -1023,7 +1008,7 @@ class ImageLoadingMixin:
             self.width = self._bioimage.dims.X
             bytes_per_composite = self.height * self.width * 3
             max_by_memory = (512 * 1024 * 1024) // max(bytes_per_composite, 1)
-            self._composite_cache_max_size = max(64, min(self.dim_t * self.dim_z, max_by_memory, 1024))
+            self._composite_cache.resize(max(64, min(self.dim_t * self.dim_z, max_by_memory, 1024)))
             self._update_slice()
         except Exception as e:
             print(f"Error changing resolution level: {e}")
@@ -1048,7 +1033,7 @@ class ImageLoadingMixin:
             self.width = self._bioimage.dims.X
             bytes_per_composite = self.height * self.width * 3
             max_by_memory = (512 * 1024 * 1024) // max(bytes_per_composite, 1)
-            self._composite_cache_max_size = max(64, min(self.dim_t * self.dim_z, max_by_memory, 1024))
+            self._composite_cache.resize(max(64, min(self.dim_t * self.dim_z, max_by_memory, 1024)))
             self.current_t = 0
             self.current_c = 0
             self.current_z = 0

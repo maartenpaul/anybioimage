@@ -31,7 +31,7 @@ def _(BioImage, bioio_ome_zarr):
 
 @app.cell
 def _(BioImage):
-    path = "https://allencell.s3.amazonaws.com/aics/nuc-morph-dataset/hipsc_fov_nuclei_timelapse_dataset/hipsc_fov_nuclei_timelapse_data_used_for_analysis/baseline_colonies_fov_timelapse_dataset/20200323_09_small/raw.ome.zarr"
+    path = "https://uk1s3.embassy.ebi.ac.uk/idr/zarr/v0.1/6001237.zarr"
     image = BioImage(path)
     print(image.get_image_dask_data())
     return (image,)

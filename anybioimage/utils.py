@@ -176,6 +176,7 @@ def build_channel_lut(
     data_min: float,
     data_max: float,
     dtype: np.dtype | None = None,
+    inverted: bool = False,
 ) -> np.ndarray:
     """Build a per-channel R/G/B LUT for fast pixel mapping.
 
@@ -184,7 +185,7 @@ def build_channel_lut(
     repeated calls during precompute reuse the same array.
     """
     n = 65536 if (dtype is None or np.dtype(dtype).itemsize > 1) else 256
-    cache_key = (color, round(vmin, 6), round(vmax, 6), round(data_min, 6), round(data_max, 6), n)
+    cache_key = (color, round(vmin, 6), round(vmax, 6), round(data_min, 6), round(data_max, 6), n, inverted)
     if cache_key in _lut_cache:
         return _lut_cache[cache_key]
 
@@ -200,6 +201,9 @@ def build_channel_lut(
     # Apply contrast window
     contrast_span = vmax - vmin + 1e-10
     normalized = np.clip((normalized - vmin) / contrast_span, 0, 1)
+
+    if inverted:
+        normalized = 1.0 - normalized
 
     r, g, b = hex_to_rgb(color)
     lut = np.empty((n, 3), dtype=np.uint8)
@@ -220,6 +224,7 @@ def composite_channels(
     maxs: list[float],
     data_mins: list[float] | None = None,
     data_maxs: list[float] | None = None,
+    inverteds: list[bool] | None = None,
 ) -> np.ndarray:
     """Composite multiple channels into an RGB image.
 
@@ -250,6 +255,7 @@ def composite_channels(
         ch_data, color, vmin, vmax = channels[0], colors[0], mins[0], maxs[0]
         ch_min = data_mins[0] if (data_mins and data_mins[0] is not None) else float(ch_data.min())
         ch_max = data_maxs[0] if (data_maxs and data_maxs[0] is not None) else float(ch_data.max())
+        inverted = bool(inverteds[0]) if (inverteds and len(inverteds) > 0) else False
         r, g, b = hex_to_rgb(color)
         result = np.zeros((height, width, 3), dtype=np.uint8)
         if np.issubdtype(ch_data.dtype, np.integer) and ch_data.dtype.itemsize <= 2:
@@ -258,6 +264,8 @@ def composite_channels(
             span = ch_max - ch_min
             norm = (indices - ch_min) / span if span > 0 else np.zeros(n, dtype=np.float32)
             norm = np.clip((norm - vmin) / (vmax - vmin + 1e-10), 0, 1)
+            if inverted:
+                norm = 1.0 - norm
             idx = ch_data.byteswap(inplace=False).view(ch_data.dtype.newbyteorder("=")) if not ch_data.dtype.isnative else ch_data
             if r: result[:, :, 0] = (norm * r).astype(np.uint8)[idx]
             if g: result[:, :, 1] = (norm * g).astype(np.uint8)[idx]
@@ -267,6 +275,8 @@ def composite_channels(
             span = ch_max - ch_min
             ch_norm = np.clip((ch_float - ch_min) / span if span > 0 else np.zeros_like(ch_float), 0, 1)
             ch_norm = np.clip((ch_norm - vmin) / (vmax - vmin + 1e-10), 0, 1)
+            if inverted:
+                ch_norm = 1.0 - ch_norm
             if r: result[:, :, 0] = np.clip(ch_norm * r, 0, 255).astype(np.uint8)
             if g: result[:, :, 1] = np.clip(ch_norm * g, 0, 255).astype(np.uint8)
             if b: result[:, :, 2] = np.clip(ch_norm * b, 0, 255).astype(np.uint8)
@@ -281,6 +291,7 @@ def composite_channels(
 
         ch_min = data_mins[i] if (data_mins and i < len(data_mins) and data_mins[i] is not None) else float(ch_data.min())
         ch_max = data_maxs[i] if (data_maxs and i < len(data_maxs) and data_maxs[i] is not None) else float(ch_data.max())
+        inverted = bool(inverteds[i]) if (inverteds and i < len(inverteds)) else False
 
         r, g, b = hex_to_rgb(color)
 
@@ -290,6 +301,8 @@ def composite_channels(
             span = ch_max - ch_min
             norm = (indices - ch_min) / span if span > 0 else np.zeros(n, dtype=np.float32)
             norm = np.clip((norm - vmin) / (vmax - vmin + 1e-10), 0, 1)
+            if inverted:
+                norm = 1.0 - norm
             idx = ch_data.byteswap(inplace=False).view(ch_data.dtype.newbyteorder("=")) if not ch_data.dtype.isnative else ch_data
             if r: composite[:, :, 0] += (norm * r).astype(np.uint8)[idx]
             if g: composite[:, :, 1] += (norm * g).astype(np.uint8)[idx]
@@ -299,6 +312,8 @@ def composite_channels(
             span = ch_max - ch_min
             ch_norm = (ch_float - ch_min) / span if span > 0 else np.zeros_like(ch_float)
             ch_norm = np.clip((ch_norm - vmin) / (vmax - vmin + 1e-10), 0, 1)
+            if inverted:
+                ch_norm = 1.0 - ch_norm
             if r: composite[:, :, 0] += (ch_norm * r).astype(np.uint16)
             if g: composite[:, :, 1] += (ch_norm * g).astype(np.uint16)
             if b: composite[:, :, 2] += (ch_norm * b).astype(np.uint16)
