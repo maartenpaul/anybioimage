@@ -3,7 +3,7 @@
 ## Installation
 
 ```bash
-uv pip install anyimage
+uv pip install anybioimage
 ```
 
 ### Optional extras
@@ -17,8 +17,8 @@ uv pip install anyimage
 | `complete` | all + sam | Full install |
 
 ```bash
-uv pip install "anyimage[all]"       # recommended
-uv pip install "anyimage[complete]"  # includes SAM (Python 3.10–3.12)
+uv pip install "anybioimage[all]"       # recommended
+uv pip install "anybioimage[complete]"  # includes SAM (Python 3.10–3.12)
 ```
 
 !!! note "SAM and Python 3.13+"

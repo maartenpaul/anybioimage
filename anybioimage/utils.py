@@ -6,7 +6,6 @@ from io import BytesIO
 import numpy as np
 from PIL import Image
 
-
 # Default colors for mask layers
 MASK_COLORS = [
     "#ff6b6b", "#4ecdc4", "#45b7d1", "#96ceb4", "#ffeaa7",
@@ -165,54 +164,6 @@ def labels_to_rgba(
     return rgba
 
 
-_lut_cache: dict = {}
-_LUT_CACHE_MAX = 128
-
-
-def build_channel_lut(
-    color: str,
-    vmin: float,
-    vmax: float,
-    data_min: float,
-    data_max: float,
-    dtype: np.dtype | None = None,
-) -> np.ndarray:
-    """Build a per-channel R/G/B LUT for fast pixel mapping.
-
-    Returns a (N, 3) uint8 array where N = number of possible input values
-    (65536 for 16-bit, 256 for 8-bit). Results are cached by parameters so
-    repeated calls during precompute reuse the same array.
-    """
-    n = 65536 if (dtype is None or np.dtype(dtype).itemsize > 1) else 256
-    cache_key = (color, round(vmin, 6), round(vmax, 6), round(data_min, 6), round(data_max, 6), n)
-    if cache_key in _lut_cache:
-        return _lut_cache[cache_key]
-
-    indices = np.arange(n, dtype=np.float32)
-
-    # Map raw value → [0, 1] using global data range
-    span = data_max - data_min
-    if span > 0:
-        normalized = (indices - data_min) / span
-    else:
-        normalized = np.zeros(n, dtype=np.float32)
-
-    # Apply contrast window
-    contrast_span = vmax - vmin + 1e-10
-    normalized = np.clip((normalized - vmin) / contrast_span, 0, 1)
-
-    r, g, b = hex_to_rgb(color)
-    lut = np.empty((n, 3), dtype=np.uint8)
-    lut[:, 0] = np.clip(normalized * r, 0, 255).astype(np.uint8)
-    lut[:, 1] = np.clip(normalized * g, 0, 255).astype(np.uint8)
-    lut[:, 2] = np.clip(normalized * b, 0, 255).astype(np.uint8)
-
-    if len(_lut_cache) >= _LUT_CACHE_MAX:
-        del _lut_cache[next(iter(_lut_cache))]
-    _lut_cache[cache_key] = lut
-    return lut
-
-
 def composite_channels(
     channels: list[np.ndarray],
     colors: list[str],
@@ -259,17 +210,23 @@ def composite_channels(
             norm = (indices - ch_min) / span if span > 0 else np.zeros(n, dtype=np.float32)
             norm = np.clip((norm - vmin) / (vmax - vmin + 1e-10), 0, 1)
             idx = ch_data.byteswap(inplace=False).view(ch_data.dtype.newbyteorder("=")) if not ch_data.dtype.isnative else ch_data
-            if r: result[:, :, 0] = (norm * r).astype(np.uint8)[idx]
-            if g: result[:, :, 1] = (norm * g).astype(np.uint8)[idx]
-            if b: result[:, :, 2] = (norm * b).astype(np.uint8)[idx]
+            if r:
+                result[:, :, 0] = (norm * r).astype(np.uint8)[idx]
+            if g:
+                result[:, :, 1] = (norm * g).astype(np.uint8)[idx]
+            if b:
+                result[:, :, 2] = (norm * b).astype(np.uint8)[idx]
         else:
             ch_float = ch_data.astype(np.float32)
             span = ch_max - ch_min
             ch_norm = np.clip((ch_float - ch_min) / span if span > 0 else np.zeros_like(ch_float), 0, 1)
             ch_norm = np.clip((ch_norm - vmin) / (vmax - vmin + 1e-10), 0, 1)
-            if r: result[:, :, 0] = np.clip(ch_norm * r, 0, 255).astype(np.uint8)
-            if g: result[:, :, 1] = np.clip(ch_norm * g, 0, 255).astype(np.uint8)
-            if b: result[:, :, 2] = np.clip(ch_norm * b, 0, 255).astype(np.uint8)
+            if r:
+                result[:, :, 0] = np.clip(ch_norm * r, 0, 255).astype(np.uint8)
+            if g:
+                result[:, :, 1] = np.clip(ch_norm * g, 0, 255).astype(np.uint8)
+            if b:
+                result[:, :, 2] = np.clip(ch_norm * b, 0, 255).astype(np.uint8)
         return result
 
     # Multi-channel path: uint16 accumulator to handle additive blending without overflow
@@ -291,16 +248,22 @@ def composite_channels(
             norm = (indices - ch_min) / span if span > 0 else np.zeros(n, dtype=np.float32)
             norm = np.clip((norm - vmin) / (vmax - vmin + 1e-10), 0, 1)
             idx = ch_data.byteswap(inplace=False).view(ch_data.dtype.newbyteorder("=")) if not ch_data.dtype.isnative else ch_data
-            if r: composite[:, :, 0] += (norm * r).astype(np.uint8)[idx]
-            if g: composite[:, :, 1] += (norm * g).astype(np.uint8)[idx]
-            if b: composite[:, :, 2] += (norm * b).astype(np.uint8)[idx]
+            if r:
+                composite[:, :, 0] += (norm * r).astype(np.uint8)[idx]
+            if g:
+                composite[:, :, 1] += (norm * g).astype(np.uint8)[idx]
+            if b:
+                composite[:, :, 2] += (norm * b).astype(np.uint8)[idx]
         else:
             ch_float = ch_data.astype(np.float32)
             span = ch_max - ch_min
             ch_norm = (ch_float - ch_min) / span if span > 0 else np.zeros_like(ch_float)
             ch_norm = np.clip((ch_norm - vmin) / (vmax - vmin + 1e-10), 0, 1)
-            if r: composite[:, :, 0] += (ch_norm * r).astype(np.uint16)
-            if g: composite[:, :, 1] += (ch_norm * g).astype(np.uint16)
-            if b: composite[:, :, 2] += (ch_norm * b).astype(np.uint16)
+            if r:
+                composite[:, :, 0] += (ch_norm * r).astype(np.uint16)
+            if g:
+                composite[:, :, 1] += (ch_norm * g).astype(np.uint16)
+            if b:
+                composite[:, :, 2] += (ch_norm * b).astype(np.uint16)
 
     return np.clip(composite, 0, 255).astype(np.uint8)

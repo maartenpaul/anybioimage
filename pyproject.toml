@@ -17,6 +17,7 @@ classifiers = [
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Scientific/Engineering :: Image Processing",
     "Topic :: Scientific/Engineering :: Visualization",
 ]
@@ -56,6 +57,9 @@ complete = [
 [project.urls]
 Homepage = "https://github.com/maartenpaul/anybioimage"
 Repository = "https://github.com/maartenpaul/anybioimage"
+Documentation = "https://maartenpaul.github.io/anybioimage/"
+Changelog = "https://github.com/maartenpaul/anybioimage/blob/main/CHANGELOG.md"
+Issues = "https://github.com/maartenpaul/anybioimage/issues"
 
 [build-system]
 requires = ["hatchling"]
@@ -68,6 +72,7 @@ packages = ["anybioimage"]
 include = [
     "anybioimage/",
     "README.md",
+    "LICENSE",
     "pyproject.toml",
 ]
 

@@ -15,13 +15,13 @@ Interactive bioimage viewer widget for Jupyter and marimo notebooks. Built on [a
 ## Installation
 
 ```bash
-uv pip install anyimage
+uv pip install anybioimage
 
 # With BioImage file support and contour rendering (recommended)
-uv pip install "anyimage[all]"
+uv pip install "anybioimage[all]"
 
 # Including SAM (requires PyTorch, Python 3.10–3.12)
-uv pip install "anyimage[complete]"
+uv pip install "anybioimage[complete]"
 ```
 
 ## Minimal example

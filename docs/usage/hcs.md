@@ -1,6 +1,6 @@
 # HCS Plates
 
-anyimage supports OME-Zarr HCS (High-Content Screening) plates. The widget adds **Well** and **FOV** dropdowns for navigation.
+anybioimage supports OME-Zarr HCS (High-Content Screening) plates. The widget adds **Well** and **FOV** dropdowns for navigation.
 
 ## Loading a plate
 

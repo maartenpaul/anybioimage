@@ -16,6 +16,17 @@ uv pip install "anybioimage[complete]"
 
 ## Quick Start
 
+### Minimal example (NumPy only)
+
+```python
+import numpy as np
+from anybioimage import BioImageViewer
+
+viewer = BioImageViewer()
+viewer.set_image(np.random.randint(0, 255, (512, 512), dtype=np.uint8))
+viewer  # displays in notebook
+```
+
 ### Jupyter
 
 ```python
