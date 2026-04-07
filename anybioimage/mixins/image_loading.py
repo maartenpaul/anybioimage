@@ -1,14 +1,12 @@
 """Image loading mixin for BioImageViewer."""
 
 import base64
+import logging
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
-
-# If the full image array fits within this threshold, load it all into RAM eagerly.
-_EAGER_LOAD_BYTES = 2 * 1024 ** 3  # 2 GB
 
 from ..utils import (
     CHANNEL_COLORS,
@@ -18,6 +16,10 @@ from ..utils import (
     normalize_image,
 )
 
+logger = logging.getLogger(__name__)
+
+# If the full image array fits within this threshold, load it all into RAM eagerly.
+_EAGER_LOAD_BYTES = 2 * 1024 ** 3  # 2 GB
 
 _THUMBNAIL_MAX = 512  # Max dimension for tile-mode thumbnail (used as baseImage fallback)
 
@@ -133,7 +135,7 @@ class ImageLoadingMixin:
         # Pre-load full array into RAM if it fits (avoids per-slice zarr I/O during navigation)
         try:
             itemsize = np.dtype(img.dtype).itemsize
-        except Exception:
+        except (TypeError, AttributeError):
             itemsize = 2  # conservative fallback (uint16)
         nbytes = img.dims.T * img.dims.C * img.dims.Z * img.dims.Y * img.dims.X * itemsize
         eager_array = None
@@ -144,7 +146,7 @@ class ImageLoadingMixin:
                     arr = np.ascontiguousarray(arr.astype(arr.dtype.newbyteorder("=")))
                 eager_array = arr
             except Exception as e:
-                print(f"[anybioimage] Eager load failed, falling back to lazy loading: {e}")
+                logger.warning("Eager load failed, falling back to lazy loading: %s", e)
 
         if eager_array is not None:
             channel_ranges = self._compute_channel_ranges_from_array(eager_array)
@@ -269,6 +271,7 @@ class ImageLoadingMixin:
                         slice_data = img.get_image_dask_data("YX", T=t, C=c, Z=z).compute()
                         samples.append(slice_data.ravel())
                     except Exception:
+                        logger.debug("Failed to load sample slice T=%d C=%d Z=%d", t, c, z)
                         continue
 
             if not samples:
@@ -449,6 +452,7 @@ class ImageLoadingMixin:
         use_jpeg = getattr(self, "use_jpeg_tiles", False)
         if use_jpeg:
             from io import BytesIO
+
             from PIL import Image as PILImage
             buf = BytesIO()
             PILImage.fromarray(region, mode="RGB").save(buf, format="JPEG", quality=85, optimize=False)
@@ -505,7 +509,7 @@ class ImageLoadingMixin:
                         num_generated += 1
 
         elapsed = (time.perf_counter() - start_total) * 1000
-        print(f"[Py] {num_generated} new + {num_cached} cached tiles in {elapsed:.0f}ms")
+        logger.debug("%d new + %d cached tiles in %.0fms", num_generated, num_cached, elapsed)
         self._tiles_data = tiles_data
 
     def _prefetch_slice(self, t: int, c: int, z: int) -> None:
@@ -526,7 +530,7 @@ class ImageLoadingMixin:
             if len(self._slice_cache) < self._slice_cache_max_size:
                 self._slice_cache[cache_key] = ch_data
         except Exception:
-            pass
+            logger.debug("Prefetch failed for T=%d C=%d Z=%d", t, c, z)
 
     def _prefetch_tiles_for_slice(self, t: int, z: int) -> None:
         """Pre-render all tiles for a (t, z) slice into the tile cache."""
@@ -837,7 +841,7 @@ class ImageLoadingMixin:
                 self._prefetch_adjacent_slices()
 
         except Exception as e:
-            print(f"Error updating slice: {e}")
+            logger.warning("Error updating slice: %s", e)
 
     def _on_dimension_change(self, change):
         """Observer callback when T or Z dimension changes."""
@@ -1010,7 +1014,7 @@ class ImageLoadingMixin:
                 self._update_slice()
                 self._start_precompute()
             except Exception as e:
-                print(f"Error changing synthetic resolution level: {e}")
+                logger.warning("Error changing synthetic resolution level: %s", e)
             return
 
         if self._bioimage is None or not hasattr(self._bioimage, "set_resolution_level"):
@@ -1026,7 +1030,7 @@ class ImageLoadingMixin:
             self._composite_cache_max_size = max(64, min(self.dim_t * self.dim_z, max_by_memory, 1024))
             self._update_slice()
         except Exception as e:
-            print(f"Error changing resolution level: {e}")
+            logger.warning("Error changing resolution level: %s", e)
 
     def _on_scene_change(self, change):
         """Observer callback when scene changes."""
@@ -1054,4 +1058,4 @@ class ImageLoadingMixin:
             self.current_z = 0
             self._update_slice()
         except Exception as e:
-            print(f"Error changing scene: {e}")
+            logger.warning("Error changing scene: %s", e)

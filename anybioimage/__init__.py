@@ -1,18 +1,19 @@
 """BioImageViewer - Interactive image viewer widget with annotation tools."""
 
-from .viewer import BioImageViewer
 from .utils import (
-    MASK_COLORS,
     CHANNEL_COLORS,
-    normalize_image,
+    MASK_COLORS,
     array_to_base64,
-    labels_to_rgba,
-    hex_to_rgb,
     composite_channels,
+    hex_to_rgb,
+    labels_to_rgba,
+    normalize_image,
 )
+from .viewer import BioImageViewer
 
-__version__ = "0.1.0"
+__version__ = "0.3.0"
 __all__ = [
+    "__version__",
     "BioImageViewer",
     "MASK_COLORS",
     "CHANNEL_COLORS",

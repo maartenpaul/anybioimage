@@ -1,8 +1,12 @@
 """SAM (Segment Anything Model) integration mixin for BioImageViewer."""
 
+import logging
+
 import numpy as np
 
 from ..utils import array_to_base64, labels_to_rgba
+
+logger = logging.getLogger(__name__)
 
 
 class SAMIntegrationMixin:
@@ -254,7 +258,7 @@ class SAMIntegrationMixin:
                 self._add_sam_mask(mask_data)
                 self._rois_data = [r for r in self._rois_data if r["id"] != roi["id"]]
         except Exception as e:
-            print(f"SAM prediction failed: {e}")
+            logger.warning("SAM prediction failed: %s", e)
 
     def _run_sam_on_point(self, point: dict):
         """Run SAM segmentation on a point prompt.
@@ -277,7 +281,7 @@ class SAMIntegrationMixin:
                 self._add_sam_mask(mask_data)
                 self._points_data = [p for p in self._points_data if p["id"] != point["id"]]
         except Exception as e:
-            print(f"SAM point prediction failed: {e}")
+            logger.warning("SAM point prediction failed: %s", e)
 
     def _update_sam_mask_layer(self):
         """Update the SAM mask layer with new labels."""

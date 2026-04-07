@@ -23,7 +23,52 @@ class BioImageViewer(
     SAMIntegrationMixin,
     anywidget.AnyWidget,
 ):
-    """Anywidget for viewing bioimages with multiple mask layers and annotation tools."""
+    """Interactive biological image viewer widget for Jupyter and marimo notebooks.
+
+    Built on anywidget, BioImageViewer supports multi-dimensional images (5D: TCZYX),
+    multi-channel composites with per-channel LUT controls, mask overlays, annotation
+    tools, SAM integration, and HCS plate navigation.
+
+    Basic usage::
+
+        from anybioimage import BioImageViewer
+        import numpy as np
+
+        viewer = BioImageViewer()
+        viewer.set_image(np.random.randint(0, 255, (512, 512), dtype=np.uint8))
+        viewer  # displays in notebook
+
+    With BioImage for lazy loading::
+
+        from bioio import BioImage
+        viewer = BioImageViewer()
+        viewer.set_image(BioImage("image.tif"))
+
+    Key public methods:
+        - ``set_image(data)`` -- Load a numpy array or BioImage object
+        - ``set_plate(path)`` -- Load an HCS OME-Zarr plate
+        - ``add_mask(labels, name, color, opacity)`` -- Add a mask overlay layer
+        - ``remove_mask(mask_id)`` / ``clear_masks()`` -- Remove mask layers
+        - ``enable_sam(model_type)`` -- Enable SAM segmentation
+
+    Key properties:
+        - ``rois_df`` -- DataFrame of rectangle annotations
+        - ``polygons_df`` -- DataFrame of polygon annotations
+        - ``points_df`` -- DataFrame of point annotations
+
+    Observable traitlets (sync=True):
+        - ``current_t``, ``current_z`` -- Current time/Z position
+        - ``tool_mode`` -- Active annotation tool ('pan', 'select', 'draw', 'polygon', 'point')
+        - ``dim_t``, ``dim_c``, ``dim_z`` -- Image dimension sizes
+        - ``width``, ``height`` -- Image pixel dimensions
+
+    The widget is composed of several mixins that can be extended independently:
+        - ``ImageLoadingMixin`` -- Image loading, caching, and tile-based rendering
+        - ``MaskManagementMixin`` -- Mask overlay layer management
+        - ``AnnotationsMixin`` -- Annotation tools (rectangles, polygons, points)
+        - ``PlateLoadingMixin`` -- HCS OME-Zarr plate navigation
+        - ``SAMIntegrationMixin`` -- Segment Anything Model integration
+    """
 
     # Image data
     image_data = traitlets.Unicode("").tag(sync=True)
@@ -158,6 +203,14 @@ class BioImageViewer(
         self.observe(self._on_histogram_request, names=["_histogram_request"])
         self.observe(self._on_jpeg_toggle, names=["use_jpeg_tiles"])
 
+    def close(self):
+        """Clean up resources when the widget is closed."""
+        if self._precompute_event is not None:
+            self._precompute_event.set()
+        if self._prefetch_executor is not None:
+            self._prefetch_executor.shutdown(wait=False)
+        super().close()
+
     _esm = """
     async function loadImage(base64Data) {
         return new Promise((resolve, reject) => {
@@ -184,6 +237,7 @@ class BioImageViewer(
     };
 
     async function render({ model, el }) {
+      try {
         const TILE_SIZE = model.get('_tile_size') || 256;
         const tileCache = new Map();
         const pendingTiles = new Set();
@@ -1083,6 +1137,7 @@ class BioImageViewer(
             'polygon': 'Polygon',
             'point': 'Point'
         };
+        const CURSORS = { 'pan': 'grab', 'select': 'default', 'draw': 'crosshair', 'polygon': 'crosshair', 'point': 'crosshair' };
 
         function screenToImage(screenX, screenY) {
             return {
@@ -1438,8 +1493,7 @@ class BioImageViewer(
                 btn.classList.toggle('active', btn.dataset.mode === mode);
             });
 
-            const cursors = { 'pan': 'grab', 'select': 'default', 'draw': 'crosshair', 'polygon': 'crosshair', 'point': 'crosshair' };
-            canvas.style.cursor = cursors[mode] || 'default';
+            canvas.style.cursor = CURSORS[mode] || 'default';
             toolStatus.textContent = 'Tool: ' + TOOL_NAMES[mode];
             renderCanvas();
         }
@@ -1682,8 +1736,7 @@ class BioImageViewer(
         });
 
         const initMode = model.get('tool_mode');
-        const cursors = { 'pan': 'grab', 'select': 'default', 'draw': 'crosshair', 'polygon': 'crosshair', 'point': 'crosshair' };
-        canvas.style.cursor = cursors[initMode] || 'default';
+        canvas.style.cursor = CURSORS[initMode] || 'default';
         toolStatus.textContent = 'Tool: ' + TOOL_NAMES[initMode];
 
         let isInitialLoad = true;
@@ -1745,8 +1798,7 @@ class BioImageViewer(
             [panBtn, selectBtn, rectBtn, polygonBtn, pointBtn].forEach(btn => {
                 btn.classList.toggle('active', btn.dataset.mode === mode);
             });
-            const cursors = { 'pan': 'grab', 'select': 'default', 'draw': 'crosshair', 'polygon': 'crosshair', 'point': 'crosshair' };
-            canvas.style.cursor = cursors[mode] || 'default';
+            canvas.style.cursor = CURSORS[mode] || 'default';
             toolStatus.textContent = 'Tool: ' + TOOL_NAMES[mode];
         });
 
@@ -1784,9 +1836,9 @@ class BioImageViewer(
         model.on('change:scenes', rebuildDimControls);
         model.on('change:plate_wells', rebuildDimControls);
         model.on('change:plate_fovs', rebuildDimControls);
-        model.on('change:current_t', () => { updateDimStatus(); if (panelOpen) requestHistograms(); });
+        model.on('change:current_t', () => { updateDimStatus(); if (panelOpen) requestHistograms(); renderCanvas(); });
         model.on('change:current_c', updateDimStatus);
-        model.on('change:current_z', () => { updateDimStatus(); if (panelOpen) requestHistograms(); });
+        model.on('change:current_z', () => { updateDimStatus(); if (panelOpen) requestHistograms(); renderCanvas(); });
 
         // Decode raw RGBA bytes (or JPEG) to ImageBitmap (much faster than PNG)
         async function decodeRawTile(tileData) {
@@ -1819,11 +1871,13 @@ class BioImageViewer(
             renderCanvas();
         });
 
-        model.on('change:current_t', renderCanvas);
-        model.on('change:current_z', renderCanvas);
         model.on('change:current_resolution', clearTileCache);
 
         new ResizeObserver(() => renderCanvas()).observe(canvasWrapper);
+      } catch (error) {
+        console.error('BioImageViewer render error:', error);
+        el.innerHTML = '<div style="color:red;padding:16px;font-family:monospace">Widget error: ' + error.message + '</div>';
+      }
     }
 
     export default { render };
