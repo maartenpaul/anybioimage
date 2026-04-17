@@ -267,3 +267,35 @@ class TestAnnotationDataFrameEdgeCases:
         viewer = BioImageViewer()
         viewer.clear_all_annotations()  # Should not raise
         assert viewer._rois_data == []
+
+
+class TestRenderBackendSelection:
+    def test_default_backend_is_canvas2d(self):
+        from anybioimage import BioImageViewer
+
+        viewer = BioImageViewer()
+        assert viewer._render_backend == "canvas2d"
+        # ESM should be the Canvas2D source
+        assert "tileCache" in viewer._esm  # a Canvas2D-only symbol
+
+    def test_explicit_canvas2d_backend(self):
+        from anybioimage import BioImageViewer
+
+        viewer = BioImageViewer(render_backend="canvas2d")
+        assert viewer._render_backend == "canvas2d"
+
+    def test_viv_backend_selected(self):
+        from anybioimage import BioImageViewer
+
+        viewer = BioImageViewer(render_backend="viv")
+        assert viewer._render_backend == "viv"
+        # Stub ESM contains "export default"
+        assert "export default" in viewer._esm
+
+    def test_unknown_backend_raises_valueerror(self):
+        import pytest
+
+        from anybioimage import BioImageViewer
+
+        with pytest.raises(ValueError, match="unknown render_backend"):
+            BioImageViewer(render_backend="vulkan")

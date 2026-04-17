@@ -159,7 +159,10 @@ class BioImageViewer(
     _histogram_request = traitlets.Dict(allow_none=True).tag(sync=True)
     _histogram_data = traitlets.Dict(allow_none=True).tag(sync=True)
 
-    def __init__(self, **kwargs):
+    # Rendering backend — set at construction, not swappable mid-session.
+    _render_backend = traitlets.Unicode("canvas2d").tag(sync=True)
+
+    def __init__(self, *, render_backend: str = "canvas2d", **kwargs):
         super().__init__(**kwargs)
         self._mask_arrays = {}  # Store raw label arrays by mask id
         self._mask_caches = {}  # Cache rendered versions by mask id
@@ -204,7 +207,8 @@ class BioImageViewer(
         self.observe(self._on_jpeg_toggle, names=["use_jpeg_tiles"])
 
         from .backends import get_backend_esm
-        self._esm = get_backend_esm("canvas2d")
+        self._render_backend = render_backend
+        self._esm = get_backend_esm(render_backend)
 
     def close(self):
         """Clean up resources when the widget is closed."""
