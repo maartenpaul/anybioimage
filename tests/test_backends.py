@@ -2,6 +2,7 @@
 
 import pytest
 
+import anybioimage
 from anybioimage.backends import get_backend_esm, KNOWN_BACKENDS
 
 
@@ -26,3 +27,15 @@ def test_get_backend_esm_viv_returns_nonempty_string():
 def test_get_backend_esm_unknown_raises():
     with pytest.raises(ValueError, match="unknown render_backend"):
         get_backend_esm("opengl")
+
+
+def test_canvas2d_backend_esm_matches_shipped_source_file():
+    """The Canvas2D backend loader must return the exact bytes of shared/canvas2d.js."""
+    from pathlib import Path
+
+    import anybioimage.backends.canvas2d as canvas2d_mod
+
+    shared = Path(anybioimage.__file__).parent / "frontend" / "shared" / "canvas2d.js"
+    assert shared.is_file()
+    expected = shared.read_text(encoding="utf-8")
+    assert canvas2d_mod.load_esm() == expected
