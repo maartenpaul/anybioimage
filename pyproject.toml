@@ -46,6 +46,8 @@ dev = [
     "pytest>=7.0.0",
     "ruff>=0.1.0",
     "ty>=0.0.1a0",
+    "playwright>=1.47",
+    "pytest-playwright>=0.5",
 ]
 all = [
     "anybioimage[contours,bioio,dev]",
@@ -97,6 +99,8 @@ dev = [
     "pytest>=7.0.0",
     "ruff>=0.1.0",
     "ty>=0.0.1a0",
+    "playwright>=1.47",
+    "pytest-playwright>=0.5",
 ]
 
 [tool.ruff]
