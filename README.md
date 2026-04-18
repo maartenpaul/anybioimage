@@ -163,8 +163,7 @@ viewer = BioImageViewer(render_backend="viv")
 viewer.set_image("https://example.com/my.ome.zarr")
 ```
 
-Non-zarr inputs passed to a Viv-backed viewer automatically fall back to Canvas2D
-for that image — you'll see one INFO-level log line but no error.
+Non-zarr inputs passed to a Viv-backed viewer display an inline notice; they do not render. Use the default `render_backend="canvas2d"` (no kwarg) for TIFF/numpy/non-zarr inputs.
 
 ### Attribution
 

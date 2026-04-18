@@ -17,8 +17,6 @@ await build({
   loader: {
     '.js': 'jsx',
     '.jsx': 'jsx',
-    // Canvas2D ESM is a raw ESM module source — inline as text and eval via Blob URL in the fallback path.
-    '.canvas2d.js': 'text',
   },
   jsx: 'automatic',
   define: {

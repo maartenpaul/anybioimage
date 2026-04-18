@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - No channel panel UI on the Viv path yet (min/max/contrast sliders land in v0.7.1).
 - T slider may not always trigger a full re-render in edge cases; being investigated.
 - Mask overlays, annotations, SAM deferred to v0.7.1–v0.7.2.
+- Non-zarr inputs passed to a Viv-backed viewer display a fallback notice instead of rendering. Use `render_backend="canvas2d"` (default) for TIFF/numpy/non-zarr inputs.
 
 ## [0.3.0]
 
