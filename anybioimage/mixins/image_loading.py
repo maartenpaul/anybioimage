@@ -45,10 +45,20 @@ def _looks_like_zarr_url(source) -> bool:
     This is a cheap shape check — it does NOT verify the store exists or is
     well-formed. Callers that commit to the Viv path should follow up with a
     metadata probe and fall back to Canvas2D on failure.
+
+    Contract: `source` must point at the store root (ending in `.zarr` or
+    `.ome.zarr`). Interior keys like `foo.zarr/.zgroup` are NOT detected —
+    Viv opens the root group, not individual chunks.
     """
     if not isinstance(source, str) or not source:
         return False
-    stripped = source.rstrip("/")
+    # Strip query string + fragment so signed/versioned URLs still match
+    # (e.g. `https://.../my.zarr?versionId=abc`).
+    from urllib.parse import urlparse
+
+    parsed = urlparse(source)
+    path = parsed.path if parsed.scheme else source
+    stripped = path.rstrip("/")
     lowered = stripped.lower()
     return any(lowered.endswith(suffix) for suffix in _ZARR_SUFFIXES)
 
