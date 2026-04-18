@@ -39,3 +39,13 @@ def test_canvas2d_backend_esm_matches_shipped_source_file():
     assert shared.is_file()
     expected = shared.read_text(encoding="utf-8")
     assert canvas2d_mod.load_esm() == expected
+
+
+def test_viv_backend_esm_matches_shipped_bundle():
+    from pathlib import Path
+
+    import anybioimage.backends.viv as viv_mod
+
+    bundle = Path(anybioimage.__file__).parent / "frontend" / "viv" / "dist" / "viv-bundle.js"
+    assert bundle.is_file(), "build Task 14 must have committed dist/viv-bundle.js"
+    assert viv_mod.load_esm() == bundle.read_text(encoding="utf-8")

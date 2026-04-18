@@ -289,8 +289,9 @@ class TestRenderBackendSelection:
 
         viewer = BioImageViewer(render_backend="viv")
         assert viewer._render_backend == "viv"
-        # Stub ESM contains "export default"
-        assert "export default" in viewer._esm
+        # Real Viv bundle is ~3 MB; minified form uses "export{X as default}"
+        assert len(viewer._esm) > 10_000  # stub is ~40 chars
+        assert "as default}" in viewer._esm or "export default" in viewer._esm
 
     def test_unknown_backend_raises_valueerror(self):
         import pytest
