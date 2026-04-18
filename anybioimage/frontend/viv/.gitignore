@@ -1,2 +1,5 @@
 node_modules/
 *.log
+# Allow the committed build artifact
+!dist/
+!dist/viv-bundle.js
