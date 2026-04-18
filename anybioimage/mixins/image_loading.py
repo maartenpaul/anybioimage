@@ -39,6 +39,39 @@ def _thumbnail(arr: np.ndarray, max_size: int = _THUMBNAIL_MAX) -> np.ndarray:
 _ZARR_SUFFIXES = (".zarr", ".ome.zarr")
 
 
+def _channel_settings_from_omero(ome: dict, dim_c: int) -> list[dict]:
+    """Build channel_settings dicts from an OME-Zarr omero block (or defaults)."""
+    omero = ome.get("omero") or {}
+    omero_channels = omero.get("channels") or []
+    out = []
+    for i in range(dim_c):
+        src = omero_channels[i] if i < len(omero_channels) else {}
+        window = src.get("window") or {}
+        data_min = float(window.get("min", 0.0))
+        data_max = float(window.get("max", 65535.0))
+        start = float(window.get("start", data_min))
+        end = float(window.get("end", data_max))
+        span = max(data_max - data_min, 1.0)
+        vmin = max(0.0, (start - data_min) / span)
+        vmax = min(1.0, (end - data_min) / span)
+        color_hex = src.get("color")
+        color = (
+            f"#{color_hex}"
+            if color_hex and not color_hex.startswith("#")
+            else (color_hex or CHANNEL_COLORS[i % len(CHANNEL_COLORS)])
+        )
+        out.append({
+            "name": src.get("label") or f"Channel {i}",
+            "color": color,
+            "visible": bool(src.get("active", True)),
+            "min": vmin,
+            "max": vmax,
+            "data_min": data_min,
+            "data_max": data_max,
+        })
+    return out
+
+
 def _looks_like_zarr_url(source) -> bool:
     """Return True if `source` syntactically looks like a zarr store URL/path.
 
@@ -93,17 +126,98 @@ class ImageLoadingMixin:
     """
 
     def set_image(self, data):
-        """Set the base image from a numpy array or BioImage object.
+        """Set the base image.
 
-        Args:
-            data: Either a numpy array or a BioImage object.
-                  If BioImage, enables lazy loading for 5D data.
+        Accepts:
+          - A numpy array (Canvas2D path).
+          - A BioImage object (Canvas2D path with lazy loading).
+          - A string URL/path to an OME-Zarr store (Viv path; silent fallback
+            to Canvas2D if the backend is not Viv or the URL doesn't look like zarr).
         """
-        # Check if this is a BioImage object
+        if isinstance(data, str) and _looks_like_zarr_url(data):
+            if getattr(self, "_render_backend", "canvas2d") == "viv":
+                try:
+                    self._set_zarr_url(data)
+                    return
+                except Exception as e:
+                    logger.info("Viv zarr load failed (%s); falling back to Canvas2D", e)
+                    self._viv_mode = "canvas2d-fallback"
+            # Canvas2D fallback: defer to BioImage
+            import bioio_ome_zarr
+            from bioio import BioImage
+
+            self._set_bioimage(BioImage(data, reader=bioio_ome_zarr.Reader))
+            return
+
         if hasattr(data, "dims") and hasattr(data, "dask_data"):
+            if getattr(self, "_render_backend", "canvas2d") == "viv":
+                self._viv_mode = "canvas2d-fallback"
             self._set_bioimage(data)
         else:
+            if getattr(self, "_render_backend", "canvas2d") == "viv":
+                self._viv_mode = "canvas2d-fallback"
             self._set_numpy_image(data)
+
+    def _set_zarr_url(self, url: str) -> None:
+        """Metadata-only OME-Zarr load for the Viv backend.
+
+        Populates dimension traitlets, channel settings, and resolution levels
+        from the store's `.zattrs` so the JS side can render with zarrita.js
+        fetching chunks directly in the browser. No precompute, no PNG encoding,
+        no full-array preload.
+        """
+        import zarr
+
+        store = zarr.open_group(url, mode="r")
+        attrs = dict(store.attrs)
+
+        ome = attrs.get("ome", attrs)
+        multiscales = ome.get("multiscales")
+        if not multiscales:
+            raise ValueError(f"No OME-Zarr multiscales metadata at {url}")
+
+        ms = multiscales[0]
+        axes = ms.get("axes", [])
+        datasets = ms.get("datasets", [])
+
+        axis_names = [a.get("name", "").lower() for a in axes]
+        level0_path = datasets[0]["path"]
+        level0 = store[level0_path]
+        shape = level0.shape
+
+        def _axis(name: str, default: int) -> int:
+            if name in axis_names:
+                return int(shape[axis_names.index(name)])
+            return default
+
+        dim_t = _axis("t", 1)
+        dim_c = _axis("c", 1)
+        dim_z = _axis("z", 1)
+        height = _axis("y", shape[-2])
+        width = _axis("x", shape[-1])
+
+        channel_settings = _channel_settings_from_omero(ome, dim_c)
+
+        with self.hold_trait_notifications():
+            self.dim_t = dim_t
+            self.dim_c = dim_c
+            self.dim_z = dim_z
+            self.height = height
+            self.width = width
+            self.current_t = 0
+            self.current_c = 0
+            self.current_z = 0
+            self.resolution_levels = list(range(len(datasets)))
+            self.current_resolution = 0
+            self._channel_settings = channel_settings
+            self.scenes = []
+            self._full_array = None
+            self._bioimage = None
+            self._pyramid = None
+            self._pyramid_has_native = True
+            self._viv_mode = "viv"
+            self._zarr_source = {"url": url, "headers": {}}
+            self.image_data = ""
 
     def _set_numpy_image(self, data: np.ndarray):
         """Set the base image from a numpy array.
