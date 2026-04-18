@@ -2,6 +2,28 @@
 
 Planned features and improvements for anybioimage, organized by milestone.
 
+## Viv backend (WebGL2 rendering for OME-Zarr)
+
+### Delivered
+
+| Release | Description |
+|---|---|
+| v0.7.0-alpha | Core zarr rendering + HCS plates (**delivered**) |
+
+### Planned
+
+| Release | Adds on Viv backend |
+|---|---|
+| v0.7.1 | Read-only mask overlays |
+| v0.7.2 | Annotations + SAM |
+| v0.7.3 | MIP / projections |
+| v0.8.0 | Measurement, annotation editing, undo/redo (Canvas2D first, port) |
+| v0.8.x | Orthogonal views |
+| v0.9.0 | OMERO data source (its own spec + plan cycle) |
+| v1.0 | Volume raycasting |
+
+---
+
 ## v0.4.0 — Display Enhancements
 
 - **Colormap / LUT support** — Standard scientific colormaps (viridis, plasma, magma, inferno, etc.) in addition to basic channel colors. Allow users to select colormaps per channel.

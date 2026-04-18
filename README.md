@@ -142,6 +142,38 @@ Requires `uv pip install "anybioimage[sam]"` (Python 3.10–3.12).
 | `all` | bioio + contours | Recommended (no PyTorch) |
 | `complete` | all + sam | Everything |
 
+## Rendering backends
+
+`BioImageViewer` ships with two rendering backends:
+
+| Backend | Default? | Use when |
+|---|---|---|
+| `canvas2d` | yes | You're passing numpy arrays, TIFFs, or anything non-zarr. |
+| `viv` (alpha) | opt-in | You're visualising OME-Zarr (local, HTTP, or public S3) and want WebGL2 speed. |
+
+```python
+from anybioimage import BioImageViewer
+
+# Canvas2D (default) — unchanged.
+viewer = BioImageViewer()
+viewer.set_image("image.tif")
+
+# Viv backend — browser-direct zarr fetch + WebGL2 rendering.
+viewer = BioImageViewer(render_backend="viv")
+viewer.set_image("https://example.com/my.ome.zarr")
+```
+
+Non-zarr inputs passed to a Viv-backed viewer automatically fall back to Canvas2D
+for that image — you'll see one INFO-level log line but no error.
+
+### Attribution
+
+The Viv backend is built on the following MIT-licensed projects:
+
+- [Viv](https://github.com/hms-dbmi/viv) — WebGL2 image rendering
+- [zarrita.js](https://github.com/manzt/zarrita.js) — browser zarr client
+- [deck.gl](https://deck.gl/) — view management
+
 ## License
 
 MIT
