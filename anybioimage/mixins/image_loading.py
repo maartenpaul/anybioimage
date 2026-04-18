@@ -214,7 +214,6 @@ class ImageLoadingMixin:
             self.current_scene = ""
             self._full_array = None
             self._raw_numpy_array = None
-            self._bioimage = None
             self._pyramid = None
             self._pyramid_has_native = len(datasets) > 1
             self._viv_mode = "viv"
