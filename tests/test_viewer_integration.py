@@ -299,3 +299,31 @@ class TestRenderBackendSelection:
 
         with pytest.raises(ValueError, match="unknown render_backend"):
             BioImageViewer(render_backend="vulkan")
+
+
+class TestVivTraitlets:
+    def test_zarr_source_defaults_to_empty_dict(self):
+        from anybioimage import BioImageViewer
+
+        viewer = BioImageViewer()
+        assert viewer._zarr_source == {}
+
+    def test_viv_mode_defaults_to_viv(self):
+        from anybioimage import BioImageViewer
+
+        viewer = BioImageViewer()
+        assert viewer._viv_mode == "viv"
+
+    def test_pixel_info_defaults_to_none(self):
+        from anybioimage import BioImageViewer
+
+        viewer = BioImageViewer()
+        assert viewer._pixel_info is None
+
+    def test_viv_traitlets_sync_tagged(self):
+        from anybioimage import BioImageViewer
+
+        viewer = BioImageViewer()
+        for name in ("_zarr_source", "_viv_mode", "_pixel_info"):
+            trait = viewer.traits()[name]
+            assert trait.metadata.get("sync") is True, name

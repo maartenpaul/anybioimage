@@ -162,6 +162,13 @@ class BioImageViewer(
     # Rendering backend — set at construction, not swappable mid-session.
     _render_backend = traitlets.Unicode("canvas2d").tag(sync=True)
 
+    # Viv backend state (all sync=True so JS sees changes).
+    _zarr_source = traitlets.Dict({}).tag(sync=True)
+    # "viv" when rendering zarr through Viv; "canvas2d-fallback" when non-zarr input was passed.
+    _viv_mode = traitlets.Unicode("viv").tag(sync=True)
+    # Pixel-intensity readout from JS hover; None when pointer is outside the canvas.
+    _pixel_info = traitlets.Dict(allow_none=True, default_value=None).tag(sync=True)
+
     def __init__(self, *, render_backend: str = "canvas2d", **kwargs):
         super().__init__(**kwargs)
         self._mask_arrays = {}  # Store raw label arrays by mask id
