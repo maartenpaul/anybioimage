@@ -1,0 +1,52 @@
+name: Viv bundle check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  bundle-in-sync:
+    name: Rebuild & diff against committed bundle
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: anybioimage/frontend/viv/package-lock.json
+
+      - name: Install npm dependencies
+        working-directory: anybioimage/frontend/viv
+        run: npm ci
+
+      - name: Rebuild bundle
+        working-directory: anybioimage/frontend/viv
+        run: npm run build
+
+      - name: Fail if bundle drifted from source
+        run: |
+          if ! git diff --quiet anybioimage/frontend/viv/dist/viv-bundle.js; then
+            echo "::error::dist/viv-bundle.js is out of sync with src/. Run 'npm run build' in anybioimage/frontend/viv/ and commit the result."
+            git diff --stat anybioimage/frontend/viv/dist/viv-bundle.js
+            exit 1
+          fi
+
+  size-limit:
+    name: Bundle size guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: anybioimage/frontend/viv/package-lock.json
+      - name: Install npm dependencies
+        working-directory: anybioimage/frontend/viv
+        run: npm ci
+      - name: Run size-limit
+        working-directory: anybioimage/frontend/viv
+        run: npx size-limit
