@@ -64,6 +64,19 @@ def _(BioImageViewer, image, mo):
 
 
 @app.cell
+def _viv_cell(mo):
+    import os
+
+    if os.environ.get("ANYBIOIMAGE_PLAYWRIGHT") == "1":
+        from anybioimage import BioImageViewer as _BioImageViewer
+
+        _viv_viewer = _BioImageViewer(render_backend="viv")
+        _viv_viewer.set_image("examples/image.zarr")
+        _ = mo.ui.anywidget(_viv_viewer)
+    return
+
+
+@app.cell
 def _(mo):
     mo.md("""
     ## Annotation Tools

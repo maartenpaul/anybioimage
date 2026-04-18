@@ -23,7 +23,8 @@ def _free_port():
         return s.getsockname()[1]
 
 
-def _wait_for_token(proc, timeout=30):
+def _wait_for_server(proc, port, timeout=30):
+    """Wait for marimo to print its URL line. Supports both token and no-token modes."""
     deadline = time.time() + timeout
     buf = []
     while time.time() < deadline:
@@ -33,10 +34,14 @@ def _wait_for_token(proc, timeout=30):
                 raise RuntimeError(f"marimo exited early:\n{''.join(buf)}")
             continue
         buf.append(line)
+        # Token-based URL: access_token=<hex>
         m = re.search(r"access_token=([0-9a-f-]+)", line)
         if m:
-            return m.group(1), "".join(buf)
-    raise TimeoutError(f"access token never printed:\n{''.join(buf)}")
+            return f"http://localhost:{port}?access_token={m.group(1)}", "".join(buf)
+        # No-token URL: just the bare localhost line
+        if re.search(rf"localhost:{port}", line) and "access_token" not in line:
+            return f"http://localhost:{port}", "".join(buf)
+    raise TimeoutError(f"marimo server URL never printed:\n{''.join(buf)}")
 
 
 @pytest.fixture(scope="session")
@@ -55,7 +60,7 @@ def marimo_server():
     port = _free_port()
     env = {**os.environ, "ANYBIOIMAGE_PLAYWRIGHT": "1"}
     proc = subprocess.Popen(
-        ["marimo", "edit", str(NOTEBOOK), "--port", str(port), "--no-token-check", "--headless"],
+        ["marimo", "edit", str(NOTEBOOK), "--port", str(port), "--no-token", "--headless"],
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         cwd=REPO_ROOT,
@@ -64,8 +69,8 @@ def marimo_server():
         bufsize=1,
     )
     try:
-        token, _ = _wait_for_token(proc)
-        yield f"http://localhost:{port}?access_token={token}"
+        url, _ = _wait_for_server(proc, port)
+        yield url
     finally:
         proc.send_signal(signal.SIGINT)
         try:
