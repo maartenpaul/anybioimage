@@ -36,6 +36,23 @@ def _thumbnail(arr: np.ndarray, max_size: int = _THUMBNAIL_MAX) -> np.ndarray:
     return arr[ys[:, None], xs] if arr.ndim == 2 else arr[ys[:, None], xs, :]
 
 
+_ZARR_SUFFIXES = (".zarr", ".ome.zarr")
+
+
+def _looks_like_zarr_url(source) -> bool:
+    """Return True if `source` syntactically looks like a zarr store URL/path.
+
+    This is a cheap shape check — it does NOT verify the store exists or is
+    well-formed. Callers that commit to the Viv path should follow up with a
+    metadata probe and fall back to Canvas2D on failure.
+    """
+    if not isinstance(source, str) or not source:
+        return False
+    stripped = source.rstrip("/")
+    lowered = stripped.lower()
+    return any(lowered.endswith(suffix) for suffix in _ZARR_SUFFIXES)
+
+
 class ImageLoadingMixin:
     """Mixin class providing image loading functionality for BioImageViewer.
 
