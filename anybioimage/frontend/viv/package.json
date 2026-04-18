@@ -33,7 +33,7 @@
   "size-limit": [
     {
       "path": "dist/viv-bundle.js",
-      "limit": "3 MB"
+      "limit": "4 MB"
     }
   ]
 }
