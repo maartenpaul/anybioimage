@@ -61,3 +61,83 @@ def test_no_thumbnail_encoded(zarr_viewer):
 
 def test_full_array_not_loaded(zarr_viewer):
     assert zarr_viewer._full_array is None
+
+
+def test_numpy_then_zarr_keeps_image_data_empty():
+    """If a numpy image is loaded first, a subsequent zarr URL must leave image_data empty."""
+    import numpy as np
+
+    if not EXAMPLE_ZARR.is_dir():
+        pytest.skip(f"{EXAMPLE_ZARR} missing")
+    viewer = BioImageViewer(render_backend="viv")
+    viewer.set_image(np.ones((64, 64), dtype=np.uint8))  # flips to canvas2d-fallback
+    viewer.set_image(str(EXAMPLE_ZARR))                   # re-enters Viv path
+    assert viewer._viv_mode == "viv"
+    assert viewer.image_data == "", f"stale PNG of {len(viewer.image_data)} chars"
+    assert viewer._raw_numpy_array is None
+
+
+class TestChannelSettingsFromOmero:
+    def test_no_omero_block_returns_defaults(self):
+        from anybioimage.mixins.image_loading import _channel_settings_from_omero
+        from anybioimage.utils import CHANNEL_COLORS
+
+        result = _channel_settings_from_omero({}, dim_c=3)
+        assert len(result) == 3
+        for i, ch in enumerate(result):
+            assert ch["color"] == CHANNEL_COLORS[i % len(CHANNEL_COLORS)]
+            assert ch["visible"] is True
+            assert ch["name"] == f"Channel {i}"
+
+    def test_omero_hex_color_normalized(self):
+        from anybioimage.mixins.image_loading import _channel_settings_from_omero
+
+        ome = {"omero": {"channels": [{"color": "FF0000"}]}}
+        result = _channel_settings_from_omero(ome, dim_c=1)
+        assert result[0]["color"] == "#ff0000"
+
+    def test_omero_hex_color_with_hash_preserved(self):
+        from anybioimage.mixins.image_loading import _channel_settings_from_omero
+
+        ome = {"omero": {"channels": [{"color": "#00FF00"}]}}
+        result = _channel_settings_from_omero(ome, dim_c=1)
+        assert result[0]["color"] == "#00ff00"
+
+    def test_omero_active_false_respected(self):
+        from anybioimage.mixins.image_loading import _channel_settings_from_omero
+
+        ome = {"omero": {"channels": [{"active": False}]}}
+        result = _channel_settings_from_omero(ome, dim_c=1)
+        assert result[0]["visible"] is False
+
+    def test_omero_label_used_as_name(self):
+        from anybioimage.mixins.image_loading import _channel_settings_from_omero
+
+        ome = {"omero": {"channels": [{"label": "DAPI"}]}}
+        result = _channel_settings_from_omero(ome, dim_c=1)
+        assert result[0]["name"] == "DAPI"
+
+    def test_omero_window_maps_to_normalized_min_max(self):
+        from anybioimage.mixins.image_loading import _channel_settings_from_omero
+
+        ome = {"omero": {"channels": [{
+            "window": {"min": 0.0, "max": 1000.0, "start": 100.0, "end": 800.0}
+        }]}}
+        result = _channel_settings_from_omero(ome, dim_c=1)
+        assert abs(result[0]["min"] - 0.1) < 1e-6  # 100/1000
+        assert abs(result[0]["max"] - 0.8) < 1e-6  # 800/1000
+        assert result[0]["data_min"] == 0.0
+        assert result[0]["data_max"] == 1000.0
+
+    def test_omero_channels_shorter_than_dim_c_fills_defaults(self):
+        from anybioimage.mixins.image_loading import _channel_settings_from_omero
+        from anybioimage.utils import CHANNEL_COLORS
+
+        # Only one channel in omero, but dim_c=3 — remaining fall back to defaults
+        ome = {"omero": {"channels": [{"label": "DAPI", "color": "0000FF"}]}}
+        result = _channel_settings_from_omero(ome, dim_c=3)
+        assert result[0]["name"] == "DAPI"
+        assert result[0]["color"] == "#0000ff"
+        assert result[1]["name"] == "Channel 1"
+        assert result[1]["color"] == CHANNEL_COLORS[1 % len(CHANNEL_COLORS)]
+        assert result[2]["name"] == "Channel 2"

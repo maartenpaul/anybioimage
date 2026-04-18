@@ -55,11 +55,11 @@ def _channel_settings_from_omero(ome: dict, dim_c: int) -> list[dict]:
         vmin = max(0.0, (start - data_min) / span)
         vmax = min(1.0, (end - data_min) / span)
         color_hex = src.get("color")
-        color = (
-            f"#{color_hex}"
-            if color_hex and not color_hex.startswith("#")
-            else (color_hex or CHANNEL_COLORS[i % len(CHANNEL_COLORS)])
-        )
+        if color_hex:
+            color = color_hex if color_hex.startswith("#") else f"#{color_hex}"
+            color = color.lower()
+        else:
+            color = CHANNEL_COLORS[i % len(CHANNEL_COLORS)]
         out.append({
             "name": src.get("label") or f"Channel {i}",
             "color": color,
@@ -211,10 +211,12 @@ class ImageLoadingMixin:
             self.current_resolution = 0
             self._channel_settings = channel_settings
             self.scenes = []
+            self.current_scene = ""
             self._full_array = None
+            self._raw_numpy_array = None
             self._bioimage = None
             self._pyramid = None
-            self._pyramid_has_native = True
+            self._pyramid_has_native = len(datasets) > 1
             self._viv_mode = "viv"
             self._zarr_source = {"url": url, "headers": {}}
             self.image_data = ""
@@ -1098,6 +1100,9 @@ class ImageLoadingMixin:
 
     def _on_channel_settings_change(self, change):
         """Observer callback when channel settings change."""
+        # Viv path: channel settings are consumed by the JS frontend; no Python re-render needed.
+        if getattr(self, "_viv_mode", "viv") == "viv" and self._zarr_source.get("url"):
+            return
         # For numpy arrays (no BioImage), re-render directly
         if self._bioimage is None:
             self._update_numpy_image()
