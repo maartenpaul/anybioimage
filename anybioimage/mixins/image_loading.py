@@ -212,6 +212,7 @@ class ImageLoadingMixin:
             self._channel_settings = channel_settings
             self.scenes = []
             self.current_scene = ""
+            self._bioimage = None
             self._full_array = None
             self._raw_numpy_array = None
             self._pyramid = None

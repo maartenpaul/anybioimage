@@ -1,6 +1,9 @@
 """HCS OME-Zarr plate loading mixin for BioImageViewer."""
 
+import logging
 import zarr
+
+logger = logging.getLogger(__name__)
 
 
 class PlateLoadingMixin:
@@ -155,8 +158,7 @@ class PlateLoadingMixin:
                 self._set_zarr_url(image_path)
                 return
             except Exception as e:
-                import logging
-                logging.getLogger(__name__).info(
+                logger.info(
                     "Viv plate-FOV load failed (%s); falling back to Canvas2D", e
                 )
                 self._viv_mode = "canvas2d-fallback"

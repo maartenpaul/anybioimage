@@ -25,7 +25,7 @@ def test_wells_populated(plate_viewer):
 def test_initial_zarr_source_points_at_fov(plate_viewer):
     url = plate_viewer._zarr_source.get("url", "")
     assert str(TEST_PLATE) in url
-    assert plate_viewer.current_well.replace("", "") in url.replace("/", "")
+    assert plate_viewer.current_well in url.replace("/", "")
 
 
 def test_fov_switch_updates_zarr_source(plate_viewer):
@@ -38,8 +38,12 @@ def test_fov_switch_updates_zarr_source(plate_viewer):
     assert str(TEST_PLATE) in after
 
 
-def test_fov_switch_does_not_call_set_bioimage_on_viv(plate_viewer):
-    plate_viewer._bioimage = "SENTINEL"  # would be overwritten by _set_bioimage
-    if len(plate_viewer.plate_fovs) >= 2:
-        plate_viewer.current_fov = plate_viewer.plate_fovs[1]
-    assert plate_viewer._bioimage == "SENTINEL"
+def test_fov_switch_does_not_call_set_bioimage_on_viv(plate_viewer, monkeypatch):
+    """Switching FOV on the Viv backend must NOT call _set_bioimage (would load via BioImage)."""
+    monkeypatch.setattr(
+        plate_viewer, "_set_bioimage",
+        lambda img: pytest.fail("_set_bioimage called on Viv backend"),
+    )
+    if len(plate_viewer.plate_fovs) < 2:
+        pytest.skip("test plate has only one FOV")
+    plate_viewer.current_fov = plate_viewer.plate_fovs[1]
