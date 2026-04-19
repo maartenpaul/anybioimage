@@ -214,21 +214,19 @@ class TestMaskManagement:
         assert mask["contours"] is True
         assert mask["contour_width"] == 2
 
-    def test_add_mask_data_is_base64_png(self):
-        """Mask data should be valid base64 encoded PNG."""
-        import base64
-        from io import BytesIO
-
-        from PIL import Image
+    def test_add_mask_bytes_stored(self):
+        """Mask RGBA bytes should be stored in _mask_bytes (not inline in _masks_data)."""
         viewer = BioImageViewer()
         viewer.set_image(np.zeros((32, 32), dtype=np.uint8))
         labels = np.zeros((32, 32), dtype=np.int32)
         labels[4:12, 4:12] = 1
         mask_id = viewer.add_mask(labels)
+        # No 'data' key in metadata entry
         mask = [m for m in viewer._masks_data if m["id"] == mask_id][0]
-        img = Image.open(BytesIO(base64.b64decode(mask["data"])))
-        assert img.size == (32, 32)
-        assert img.mode == "RGBA"
+        assert "data" not in mask
+        # Raw bytes are in _mask_bytes; 32×32×4 = 4096
+        assert mask_id in viewer._mask_bytes
+        assert len(viewer._mask_bytes[mask_id]) == 32 * 32 * 4
 
     def test_remove_mask(self):
         viewer = BioImageViewer()
@@ -240,14 +238,16 @@ class TestMaskManagement:
         assert id2 in viewer.get_mask_ids()
 
     def test_remove_mask_cleans_up_arrays(self):
-        """remove_mask should clean up internal arrays and caches."""
+        """remove_mask should clean up internal arrays, bytes, and caches."""
         viewer = BioImageViewer()
         viewer.set_image(np.zeros((32, 32), dtype=np.uint8))
         mask_id = viewer.add_mask(np.ones((32, 32), dtype=np.int32))
         assert mask_id in viewer._mask_arrays
+        assert mask_id in viewer._mask_bytes
         assert mask_id in viewer._mask_caches
         viewer.remove_mask(mask_id)
         assert mask_id not in viewer._mask_arrays
+        assert mask_id not in viewer._mask_bytes
         assert mask_id not in viewer._mask_caches
 
     def test_clear_masks(self):
@@ -258,6 +258,7 @@ class TestMaskManagement:
         viewer.clear_masks()
         assert len(viewer.get_mask_ids()) == 0
         assert len(viewer._mask_arrays) == 0
+        assert len(viewer._mask_bytes) == 0
         assert len(viewer._mask_caches) == 0
 
     def test_set_mask_replaces_existing(self):
@@ -280,17 +281,17 @@ class TestMaskManagement:
         assert mask["name"] == "Renamed"
 
     def test_update_mask_settings_contour_toggle(self):
-        """Toggling contours regenerates mask data."""
+        """Toggling contours regenerates mask bytes."""
         viewer = BioImageViewer()
         viewer.set_image(np.zeros((32, 32), dtype=np.uint8))
         labels = np.zeros((32, 32), dtype=np.int32)
         labels[8:24, 8:24] = 1
         mask_id = viewer.add_mask(labels, contours_only=False)
-        original_data = viewer._masks_data[0]["data"]
+        original_bytes = viewer._mask_bytes[mask_id]
 
         viewer.update_mask_settings(mask_id, contours=True, contour_width=2)
-        new_data = viewer._masks_data[0]["data"]
-        assert new_data != original_data  # Should have regenerated
+        new_bytes = viewer._mask_bytes[mask_id]
+        assert new_bytes != original_bytes  # Should have regenerated
 
     def test_update_mask_settings_contour_cache(self):
         """Toggling contours back and forth should use cache."""
@@ -299,16 +300,15 @@ class TestMaskManagement:
         labels = np.zeros((32, 32), dtype=np.int32)
         labels[8:24, 8:24] = 1
         mask_id = viewer.add_mask(labels, contours_only=False)
-        original_data = viewer._masks_data[0]["data"]
+        original_bytes = viewer._mask_bytes[mask_id]
 
         # Toggle to contours
         viewer.update_mask_settings(mask_id, contours=True)
-        _ = viewer._masks_data[0]["data"]  # contour version generated
 
         # Toggle back → should use cached filled version
         viewer.update_mask_settings(mask_id, contours=False)
-        restored_data = viewer._masks_data[0]["data"]
-        assert restored_data == original_data
+        restored_bytes = viewer._mask_bytes[mask_id]
+        assert restored_bytes == original_bytes
 
     def test_masks_df(self):
         """masks_df property returns correct DataFrame."""

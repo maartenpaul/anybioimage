@@ -175,6 +175,7 @@ class BioImageViewer(
             )
         super().__init__(*args, **kwargs)
         self._mask_arrays = {}  # Store raw label arrays by mask id
+        self._mask_bytes = {}   # Store rendered RGBA bytes by mask id (transport)
         self._mask_caches = {}  # Cache rendered versions by mask id
         self._plate_path = None  # HCS plate zarr path
         self._plate_store = None
@@ -203,6 +204,8 @@ class BioImageViewer(
         kind = content.get("kind")
         if kind == "chunk":
             self.handle_chunk_request(content)
+        elif kind == "mask_request":
+            self.handle_mask_request(content)
 
     def close(self):
         """Clean up resources when the widget is closed."""

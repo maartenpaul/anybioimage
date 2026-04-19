@@ -1,12 +1,8 @@
 """Integration tests for BioImageViewer end-to-end workflows."""
 
-import base64
-from io import BytesIO
-
 import numpy as np
 import pandas as pd
 import pytest
-from PIL import Image
 
 from anybioimage import BioImageViewer
 
@@ -218,10 +214,9 @@ class TestMaskContourIntegration:
         labels[8:24, 8:24] = 1
         mask_id = viewer.add_mask(labels, contours_only=False)
 
-        # Decode mask data and check
-        mask = [m for m in viewer._masks_data if m["id"] == mask_id][0]
-        img = Image.open(BytesIO(base64.b64decode(mask["data"])))
-        rgba = np.array(img)
+        # Decode raw RGBA bytes stored in _mask_bytes
+        raw = viewer._mask_bytes[mask_id]
+        rgba = np.frombuffer(raw, dtype=np.uint8).reshape(32, 32, 4)
         # Interior should be opaque
         assert rgba[16, 16, 3] == 255
         # Exterior should be transparent
@@ -235,9 +230,9 @@ class TestMaskContourIntegration:
         labels[8:24, 8:24] = 1
         mask_id = viewer.add_mask(labels, contours_only=True, contour_width=1)
 
-        mask = [m for m in viewer._masks_data if m["id"] == mask_id][0]
-        img = Image.open(BytesIO(base64.b64decode(mask["data"])))
-        rgba = np.array(img)
+        # Decode raw RGBA bytes stored in _mask_bytes
+        raw = viewer._mask_bytes[mask_id]
+        rgba = np.frombuffer(raw, dtype=np.uint8).reshape(32, 32, 4)
         # Interior should be transparent (eroded away)
         assert rgba[16, 16, 3] == 0
         # Boundary should be opaque
