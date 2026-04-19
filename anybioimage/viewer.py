@@ -166,6 +166,16 @@ class BioImageViewer(
     pixel_size_um = traitlets.Float(allow_none=True, default_value=None).tag(sync=True)
     scale_bar_visible = traitlets.Bool(True).tag(sync=True)
 
+    # Phase 2.5 — integration-test handshake [spec §2, §5.3].
+    # JS flips _render_ready to True on first successful raster render; test
+    # fixtures block on it before reading model state.
+    _render_ready = traitlets.Bool(False).tag(sync=True)
+
+    # Phase 2.5 — play-button gating [spec §7.4].
+    # Only flipped to True after `verify_scrub_perf()` runs and the T-scrub
+    # integration test passes on this machine.
+    scrub_perf_verified = traitlets.Bool(False).tag(sync=True)
+
     _esm = _BUNDLE
 
     def __init__(self, *args, render_backend=None, **kwargs):

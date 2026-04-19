@@ -114,6 +114,7 @@ dev = [
 [tool.pytest.ini_options]
 markers = [
     "playwright: marks tests as Playwright browser tests (requires marimo server + browser)",
+    "integration: marks tests as end-to-end integration tests (marimo server + browser; asserts via traitlets)",
 ]
 
 [tool.ruff]

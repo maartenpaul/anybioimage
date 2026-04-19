@@ -2,6 +2,15 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './App.jsx';
+import { getPerfReport, clearPerf } from './util/perf.js';
+
+// Expose perf probes on window so integration tests can read them without
+// walking the React tree. No-op on end-user machines unless __ANYBIOIMAGE_PERF
+// is set first [spec §3].
+if (typeof window !== 'undefined') {
+  window.__anybioimage_perf_report = getPerfReport;
+  window.__anybioimage_perf_clear = clearPerf;
+}
 
 async function render({ model, el }) {
   // WebGL2 gate.

@@ -116,6 +116,17 @@ export function DeckCanvas({ model, onHover, controller, maskBridge, deckRef, so
     });
   }, [sources, channelSettings, currentT, currentZ, displayMode, activeChannel]);
 
+  // _render_ready: flipped True once we have both a valid image-layer prop set
+  // AND a non-null viewState (the canvas has rendered a frame). Fixtures block
+  // on this trait via wait_for_ready(). Flip-once semantics — don't churn it
+  // on every re-render.
+  useEffect(() => {
+    if (imageLayerProps && viewState && !model.get('_render_ready')) {
+      model.set('_render_ready', true);
+      model.save_changes();
+    }
+  }, [imageLayerProps, viewState, model]);
+
   useEffect(() => {
     if (selectionsRef) selectionsRef.current = imageLayerProps?.selections ?? null;
   }, [imageLayerProps, selectionsRef]);
