@@ -10,6 +10,7 @@ from .mixins import (
     AnnotationsMixin,
     ImageLoadingMixin,
     MaskManagementMixin,
+    PixelSourceMixin,
     PlateLoadingMixin,
     SAMIntegrationMixin,
 )
@@ -17,6 +18,7 @@ from .mixins import (
 
 class BioImageViewer(
     ImageLoadingMixin,
+    PixelSourceMixin,
     PlateLoadingMixin,
     MaskManagementMixin,
     AnnotationsMixin,
@@ -216,6 +218,20 @@ class BioImageViewer(
         from .backends import get_backend_esm
         self._render_backend = render_backend
         self._esm = get_backend_esm(render_backend)
+
+        self.on_msg(self._route_message)
+
+    def _send_chunk_response(self, msg: dict, buffers) -> None:
+        """Override of PixelSourceMixin transport hook — uses anywidget's send()."""
+        self.send(msg, buffers)
+
+    def _route_message(self, widget, content, buffers):
+        """Dispatch custom JS → Py messages by `kind` key."""
+        if not isinstance(content, dict):
+            return
+        kind = content.get("kind")
+        if kind == "chunk":
+            self.handle_chunk_request(content)
 
     def close(self):
         """Clean up resources when the widget is closed."""
