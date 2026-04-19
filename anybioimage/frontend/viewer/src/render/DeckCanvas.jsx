@@ -1,8 +1,8 @@
 // anybioimage/frontend/viv/src/VivCanvas.jsx
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { PictureInPictureViewer } from '@hms-dbmi/viv';
-import { openOmeZarr } from './zarr-source.js';
-import { channelSettingsToVivProps, withTimeAndZ } from './channel-sync.js';
+import { openOmeZarr } from './pixel-sources/zarr-source.js';
+import { channelSettingsToVivProps, withTimeAndZ } from '../model/channelState.js';
 
 function useModelTrait(model, name) {
   const [value, setValue] = useState(() => model.get(name));

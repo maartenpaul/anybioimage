@@ -39,21 +39,42 @@ def _thumbnail(arr: np.ndarray, max_size: int = _THUMBNAIL_MAX) -> np.ndarray:
 _ZARR_SUFFIXES = (".zarr", ".ome.zarr")
 
 
-def _channel_settings_from_omero(ome: dict, dim_c: int) -> list[dict]:
-    """Build channel_settings dicts from an OME-Zarr omero block (or defaults)."""
+def _channel_settings_from_omero(ome: dict, dim_c: int, dtype=None) -> list[dict]:
+    """Build channel_settings dicts from an OME-Zarr omero block (or defaults).
+
+    When ``dtype`` is an integer numpy dtype, the returned ``data_min``/``data_max``
+    always reflect the full dtype range (e.g. [0, 65535] for uint16). Some OME-Zarr
+    producers write normalized [0,1] values into omero.window.min/max even when
+    the underlying array is integer-typed — trusting those would clip every pixel
+    ≥1 to saturation. The OMERO window.start/end are still honoured as the
+    initial display range, remapped onto the dtype span.
+    """
+    import numpy as np
+
+    dtype_min: float | None = None
+    dtype_max: float | None = None
+    if dtype is not None and np.issubdtype(np.dtype(dtype), np.integer):
+        info = np.iinfo(np.dtype(dtype))
+        dtype_min = float(info.min)
+        dtype_max = float(info.max)
+
     omero = ome.get("omero") or {}
     omero_channels = omero.get("channels") or []
     out = []
     for i in range(dim_c):
         src = omero_channels[i] if i < len(omero_channels) else {}
         window = src.get("window") or {}
-        data_min = float(window.get("min", 0.0))
-        data_max = float(window.get("max", 65535.0))
-        start = float(window.get("start", data_min))
-        end = float(window.get("end", data_max))
-        span = max(data_max - data_min, 1.0)
-        vmin = max(0.0, (start - data_min) / span)
-        vmax = min(1.0, (end - data_min) / span)
+        omero_min = float(window.get("min", 0.0))
+        omero_max = float(window.get("max", 65535.0))
+        if dtype_min is not None and dtype_max is not None:
+            data_min, data_max = dtype_min, dtype_max
+        else:
+            data_min, data_max = omero_min, omero_max
+        start = float(window.get("start", omero_min))
+        end = float(window.get("end", omero_max))
+        omero_span = max(omero_max - omero_min, 1.0)
+        vmin = max(0.0, (start - omero_min) / omero_span)
+        vmax = min(1.0, (end - omero_min) / omero_span)
         color_hex = src.get("color")
         if color_hex:
             color = color_hex if color_hex.startswith("#") else f"#{color_hex}"
@@ -162,9 +183,9 @@ class ImageLoadingMixin:
         """Metadata-only OME-Zarr load for the Viv backend.
 
         Populates dimension traitlets, channel settings, and resolution levels
-        from the store's `.zattrs` so the JS side can render with zarrita.js
-        fetching chunks directly in the browser. No precompute, no PNG encoding,
-        no full-array preload.
+        from the store's `.zattrs` so the JS side can render with Viv fetching
+        chunks directly in the browser (via zarr.js's HTTPStore). No precompute,
+        no PNG encoding, no full-array preload.
         """
         import zarr
 
@@ -196,7 +217,7 @@ class ImageLoadingMixin:
         height = _axis("y", shape[-2])
         width = _axis("x", shape[-1])
 
-        channel_settings = _channel_settings_from_omero(ome, dim_c)
+        channel_settings = _channel_settings_from_omero(ome, dim_c, dtype=level0.dtype)
 
         with self.hold_trait_notifications():
             self.dim_t = dim_t
