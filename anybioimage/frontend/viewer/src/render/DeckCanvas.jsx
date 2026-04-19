@@ -118,7 +118,7 @@ export function DeckCanvas({ model, onHover, deckRef, sourcesRef, selectionsRef 
 
   const layers = useMemo(() => {
     if (!imageLayerProps || !imageVisible) return [];
-    const imageLayer = new MultiscaleImageLayer({ id: 'viv-image', ...imageLayerProps });
+    const imageLayer = new MultiscaleImageLayer({ id: 'viv-image', viewportId: 'ortho', ...imageLayerProps });
     const out = [imageLayer];
     if (scaleBarVisible && pixelSizeUm) {
       out.push(buildScaleBarLayer({ pixelSizeUm, viewState, width, height }));
@@ -144,6 +144,8 @@ export function DeckCanvas({ model, onHover, deckRef, sourcesRef, selectionsRef 
           viewState={viewState ? { ortho: viewState } : undefined}
           onViewStateChange={({ viewState: v }) => setViewState(v)}
           onHover={onHover}
+          useDevicePixels={true}
+          getCursor={({ isDragging }) => (isDragging ? 'grabbing' : 'crosshair')}
         />
       )}
     </div>
