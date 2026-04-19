@@ -7,6 +7,12 @@ import { LayersPanel } from './chrome/LayersPanel/LayersPanel.jsx';
 import { DeckCanvas } from './render/DeckCanvas.jsx';
 import { installKeyboard } from './interaction/keyboard.js';
 import { makeHoverHandler } from './render/onHoverPixelInfo.js';
+import { InteractionController } from './interaction/InteractionController.js';
+import { panTool } from './interaction/tools/pan.js';
+import { selectTool } from './interaction/tools/select.js';
+import { rectTool } from './interaction/tools/rect.js';
+import { polygonTool } from './interaction/tools/polygon.js';
+import { pointTool } from './interaction/tools/point.js';
 
 export function App({ model }) {
   const [panelOpen, setPanelOpen] = useState(false);
@@ -14,6 +20,26 @@ export function App({ model }) {
   const sourcesRef = useRef(null);
   const selectionsRef = useRef(null);
   const deckRef = useRef(null);
+
+  const controller = useMemo(() => {
+    const c = new InteractionController(model);
+    c.register(panTool);
+    c.register(selectTool);
+    c.register(rectTool);
+    c.register(polygonTool);
+    c.register(pointTool);
+    return c;
+  }, [model]);
+
+  // Reset per-tool drag state on tool switch — keeps previews from leaking.
+  useEffect(() => {
+    const handler = () => {
+      rectTool.reset();
+      polygonTool.reset();
+    };
+    model.on('change:tool_mode', handler);
+    return () => model.off('change:tool_mode', handler);
+  }, [model, controller]);
 
   const onHover = useMemo(
     () => makeHoverHandler({
@@ -32,6 +58,7 @@ export function App({ model }) {
       <div className="content-area" style={{ display: 'flex', flex: 1, minHeight: 500 }}>
         <div className="viewport-slot" style={{ position: 'relative', flex: 1, minHeight: 500, background: '#000' }}>
           <DeckCanvas model={model} onHover={onHover}
+                      controller={controller}
                       deckRef={deckRef}
                       sourcesRef={sourcesRef}
                       selectionsRef={selectionsRef} />

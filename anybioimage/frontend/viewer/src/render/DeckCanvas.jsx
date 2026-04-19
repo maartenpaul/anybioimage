@@ -1,3 +1,4 @@
+// anybioimage/frontend/viewer/src/render/DeckCanvas.jsx
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import DeckGL from '@deck.gl/react';
 import { OrthographicView } from '@deck.gl/core';
@@ -30,7 +31,7 @@ function useContainerSize(ref, fallback = { width: 800, height: 600 }) {
   return size;
 }
 
-export function DeckCanvas({ model, onHover, deckRef, sourcesRef, selectionsRef }) {
+export function DeckCanvas({ model, onHover, controller, deckRef, sourcesRef, selectionsRef }) {
   const zarrSource = useModelTrait(model, '_zarr_source');
   const pixelSourceMode = useModelTrait(model, '_pixel_source_mode');
   const channelSettings = useModelTrait(model, '_channel_settings');
@@ -45,6 +46,7 @@ export function DeckCanvas({ model, onHover, deckRef, sourcesRef, selectionsRef 
   const imageVisible = useModelTrait(model, 'image_visible') !== false;
   const annotations = useModelTrait(model, '_annotations') || [];
   const selectedId = useModelTrait(model, 'selected_annotation_id') || '';
+  const toolMode = useModelTrait(model, 'tool_mode') || 'pan';
 
   const containerRef = useRef(null);
   const { width, height } = useContainerSize(containerRef);
@@ -52,8 +54,13 @@ export function DeckCanvas({ model, onHover, deckRef, sourcesRef, selectionsRef 
   const [sources, setSources] = useState(null);
   const [error, setError] = useState(null);
   const [viewState, setViewState] = useState(null);
+  const [previewTick, setPreviewTick] = useState(0);
 
-  // Open the source whenever the mode or url changes.
+  useEffect(() => {
+    if (!controller) return;
+    return controller.onPreviewChange(() => setPreviewTick((t) => t + 1));
+  }, [controller]);
+
   useEffect(() => {
     let cancelled = false;
     let activeAnywidgetSource = null;
@@ -83,14 +90,12 @@ export function DeckCanvas({ model, onHover, deckRef, sourcesRef, selectionsRef 
     };
   }, [pixelSourceMode, zarrSource?.url, imageShape, imageDtype]);
 
-  // Reset view on new source.
   useEffect(() => {
     if (!sources || !sources.length) return;
     const vs = getDefaultInitialViewState(sources, { width, height }, 0);
     setViewState(vs);
   }, [sources, width, height]);
 
-  // Expose refs for other parts of App (e.g. hover handler) without re-rendering on every change.
   useEffect(() => { if (sourcesRef) sourcesRef.current = sources; }, [sources, sourcesRef]);
 
   const imageLayerProps = useMemo(() => {
@@ -106,7 +111,6 @@ export function DeckCanvas({ model, onHover, deckRef, sourcesRef, selectionsRef 
     if (selectionsRef) selectionsRef.current = imageLayerProps?.selections ?? null;
   }, [imageLayerProps, selectionsRef]);
 
-  // Listen for reset-view messages from the toolbar (added in Task 17).
   useEffect(() => {
     const handler = (content) => {
       if (!content || content.kind !== 'reset-view') return;
@@ -124,20 +128,89 @@ export function DeckCanvas({ model, onHover, deckRef, sourcesRef, selectionsRef 
     }),
     [annotations, currentT, currentZ, selectedId]);
 
+  const previewLayer = useMemo(
+    () => (controller ? controller.getPreviewLayer() : null),
+    [controller, previewTick, toolMode]);
+
   const layers = useMemo(() => {
     const out = [];
     if (imageLayerProps && imageVisible) {
-      out.push(new MultiscaleImageLayer({
-        id: 'viv-image', viewportId: 'ortho', ...imageLayerProps,
-      }));
+      out.push(new MultiscaleImageLayer({ id: 'viv-image', viewportId: 'ortho', ...imageLayerProps }));
     }
     for (const l of annotationLayers) out.push(l);
+    if (previewLayer) out.push(previewLayer);
     if (scaleBarVisible && pixelSizeUm) {
       out.push(buildScaleBarLayer({ pixelSizeUm, viewState, width, height }));
     }
     return out;
-  }, [imageLayerProps, imageVisible, annotationLayers,
+  }, [imageLayerProps, imageVisible, annotationLayers, previewLayer,
       pixelSizeUm, scaleBarVisible, viewState, width, height]);
+
+  // Map screen pixel events to image pixel coordinates using deck.gl's
+  // orthographic unproject. coordinate.length === 2 means [x, y] image pixels.
+  function imagePixelFor(info) {
+    const coord = info?.coordinate;
+    if (!coord) return null;
+    return { x: coord[0], y: coord[1] };
+  }
+
+  function pickObject(event) {
+    const deck = deckRef?.current?.deck;
+    if (!deck || !event) return null;
+    const picked = deck.pickObject({
+      x: event.screenX ?? event._screenX ?? 0,
+      y: event.screenY ?? event._screenY ?? 0,
+      radius: 4,
+    });
+    if (!picked) return null;
+    // Link back to the source annotation for the select tool.
+    const id = picked.object?.id;
+    const sourceAnnotation = id ? annotations.find((a) => a.id === id) : null;
+    return { layer: picked.layer, object: picked.object, sourceAnnotation };
+  }
+
+  function onClick(info) {
+    if (!controller) return;
+    const pt = imagePixelFor(info);
+    if (!pt) return;
+    const ev = { ...pt, screenX: info.x, screenY: info.y, _picked: pickObject(info) };
+    // Point-style tools commit on click; select also commits here.
+    controller.handlePointerEvent('down', ev);
+    controller.handlePointerEvent('up', ev);
+  }
+
+  function onDragStart(info) {
+    if (!controller) return;
+    const pt = imagePixelFor(info);
+    if (!pt) return;
+    controller.handlePointerEvent('down', { ...pt, screenX: info.x, screenY: info.y });
+  }
+
+  function onDrag(info) {
+    if (!controller) return;
+    const pt = imagePixelFor(info);
+    if (!pt) return;
+    controller.handlePointerEvent('move', { ...pt, screenX: info.x, screenY: info.y });
+  }
+
+  function onDragEnd(info) {
+    if (!controller) return;
+    const pt = imagePixelFor(info);
+    if (!pt) return;
+    controller.handlePointerEvent('up', { ...pt, screenX: info.x, screenY: info.y });
+  }
+
+  function onDblClick(info) {
+    if (!controller) return;
+    const pt = imagePixelFor(info);
+    if (!pt) return;
+    const tool = controller.activeTool;
+    if (tool.onDoubleClick) tool.onDoubleClick(pt, { model, controller, pickObject });
+  }
+
+  // Pan is handled by OrthographicView's controller when tool_mode === 'pan';
+  // for other tools we disable the default controller so drag-draw works.
+  const viewController = toolMode === 'pan' || toolMode === 'select';
 
   if (error) {
     return <div style={{ color: '#b00', padding: 12 }}>Failed to load image: {error}</div>;
@@ -153,12 +226,19 @@ export function DeckCanvas({ model, onHover, deckRef, sourcesRef, selectionsRef 
           width={width}
           height={height}
           layers={layers}
-          views={[new OrthographicView({ id: 'ortho', controller: true })]}
+          views={[new OrthographicView({ id: 'ortho', controller: viewController })]}
           viewState={viewState ? { ortho: viewState } : undefined}
           onViewStateChange={({ viewState: v }) => setViewState(v)}
           onHover={onHover}
+          onClick={onClick}
+          onDragStart={onDragStart}
+          onDrag={onDrag}
+          onDragEnd={onDragEnd}
+          onDblClick={onDblClick}
           useDevicePixels={true}
-          getCursor={({ isDragging }) => (isDragging ? 'grabbing' : 'crosshair')}
+          getCursor={({ isDragging }) =>
+            isDragging ? 'grabbing' : (controller?.cursor || 'crosshair')
+          }
         />
       )}
     </div>
