@@ -29,6 +29,7 @@ class TestImageLoadingNumpyShapes:
         assert viewer.width == 128
         assert viewer.height == 64
 
+    @pytest.mark.xfail(reason="Removed with Canvas2D compositor in 2026-04-19 unified viewer; new pipeline keeps all dims — delete in Phase 2")
     def test_4d_squeezes_to_2d(self):
         """4D array with singleton dims squeezes to 2D."""
         viewer = BioImageViewer()
@@ -45,6 +46,7 @@ class TestImageLoadingNumpyShapes:
         assert viewer.width == 64
         assert viewer.height == 32
 
+    @pytest.mark.xfail(reason="Removed with Canvas2D compositor in 2026-04-19 unified viewer; image_data stays '' — delete in Phase 2")
     def test_uint16_normalization(self):
         """uint16 data gets normalized to uint8 for display."""
         viewer = BioImageViewer()
@@ -52,6 +54,7 @@ class TestImageLoadingNumpyShapes:
         viewer.set_image(arr)
         assert len(viewer.image_data) > 0  # base64 PNG generated
 
+    @pytest.mark.xfail(reason="Removed with Canvas2D compositor in 2026-04-19 unified viewer; image_data stays '' — delete in Phase 2")
     def test_float32_normalization(self):
         """float32 data gets normalized."""
         viewer = BioImageViewer()
@@ -59,6 +62,7 @@ class TestImageLoadingNumpyShapes:
         viewer.set_image(arr)
         assert len(viewer.image_data) > 0
 
+    @pytest.mark.xfail(reason="Removed with Canvas2D compositor in 2026-04-19 unified viewer; _raw_numpy_array removed — delete in Phase 2")
     def test_set_image_stores_raw_array(self):
         """Raw array stored for re-rendering on LUT changes."""
         viewer = BioImageViewer()
@@ -67,6 +71,7 @@ class TestImageLoadingNumpyShapes:
         assert viewer._raw_numpy_array is not None
         np.testing.assert_array_equal(viewer._raw_numpy_array, arr)
 
+    @pytest.mark.xfail(reason="Removed with Canvas2D compositor in 2026-04-19 unified viewer; image_data stays '' — delete in Phase 2")
     def test_set_image_replaces_previous(self):
         viewer = BioImageViewer()
         viewer.set_image(np.zeros((32, 32), dtype=np.uint8))
@@ -76,6 +81,7 @@ class TestImageLoadingNumpyShapes:
         assert viewer.height == 64
         assert viewer.image_data != old_data
 
+    @pytest.mark.xfail(reason="Removed with Canvas2D compositor in 2026-04-19 unified viewer; channel color default changed — delete in Phase 2")
     def test_channel_settings_created(self):
         """set_image creates channel settings with correct data range."""
         viewer = BioImageViewer()
@@ -88,6 +94,7 @@ class TestImageLoadingNumpyShapes:
         assert settings[0]["color"] == "#ffffff"
         assert settings[0]["visible"] is True
 
+    @pytest.mark.xfail(reason="Removed with Canvas2D compositor in 2026-04-19 unified viewer; uint8 data_min/max now from dtype range not pixel values — delete in Phase 2")
     def test_channel_settings_zero_size_image(self):
         """Edge case: constant image gets 0/0 data range without error."""
         viewer = BioImageViewer()
@@ -113,6 +120,7 @@ class TestImageLoadingNumpyShapes:
 class TestImageReRendering:
     """Test re-rendering numpy images on channel settings changes."""
 
+    @pytest.mark.xfail(reason="Removed with Canvas2D compositor in 2026-04-19 unified viewer; _update_numpy_image removed — delete in Phase 2")
     def test_update_numpy_image_with_color(self):
         """Changing channel color should re-render the image."""
         viewer = BioImageViewer()
@@ -127,6 +135,7 @@ class TestImageReRendering:
         viewer._update_numpy_image()
         assert viewer.image_data != original_data
 
+    @pytest.mark.xfail(reason="Removed with Canvas2D compositor in 2026-04-19 unified viewer; _update_numpy_image removed — delete in Phase 2")
     def test_update_numpy_image_with_contrast(self):
         """Changing contrast window should affect rendered output."""
         viewer = BioImageViewer()
@@ -140,6 +149,7 @@ class TestImageReRendering:
         viewer._update_numpy_image()
         assert viewer.image_data != original_data
 
+    @pytest.mark.xfail(reason="Removed with Canvas2D compositor in 2026-04-19 unified viewer; _update_numpy_image removed — delete in Phase 2")
     def test_update_numpy_image_no_raw_data(self):
         """_update_numpy_image should be a no-op if no raw data stored."""
         viewer = BioImageViewer()
@@ -442,6 +452,7 @@ class TestAnnotations:
 class TestAutoContrast:
     """Test auto-contrast computation for numpy images."""
 
+    @pytest.mark.xfail(reason="Removed with Canvas2D compositor in 2026-04-19 unified viewer; _on_auto_contrast_request removed — delete in Phase 2")
     def test_auto_contrast_numpy(self):
         """Auto contrast on numpy array computes percentile range."""
         viewer = BioImageViewer()
@@ -461,6 +472,7 @@ class TestAutoContrast:
         assert result["min"] >= 0.0
         assert result["max"] <= 1.0
 
+    @pytest.mark.xfail(reason="Removed with Canvas2D compositor in 2026-04-19 unified viewer; _on_auto_contrast_request removed — delete in Phase 2")
     def test_auto_contrast_all_channels(self):
         """channel=-1 should compute ranges for all channels."""
         viewer = BioImageViewer()
@@ -488,6 +500,7 @@ class TestWidgetLifecycle:
         viewer.set_image(np.zeros((32, 32), dtype=np.uint8))
         viewer.close()
 
+    @pytest.mark.xfail(reason="Removed with Canvas2D compositor in 2026-04-19 unified viewer; _precompute_event removed — delete in Phase 2")
     def test_close_cancels_precompute(self):
         """close() should set the cancel event if one exists."""
         import threading

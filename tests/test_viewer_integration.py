@@ -4,6 +4,7 @@ import base64
 from io import BytesIO
 
 import numpy as np
+import pytest
 from PIL import Image
 
 from anybioimage import BioImageViewer
@@ -37,6 +38,7 @@ class TestViewerWorkflow:
         viewer.clear_masks()
         assert len(viewer.get_mask_ids()) == 0
 
+    @pytest.mark.xfail(reason="Removed with Canvas2D compositor in 2026-04-19 unified viewer; image_data stays '' — delete in Phase 2")
     def test_replace_image_preserves_clean_state(self):
         """Replacing image should update dimensions and generate new display."""
         viewer = BioImageViewer()
@@ -100,6 +102,7 @@ class TestChannelSettings:
         viewer._channel_settings = settings
         assert viewer._channel_settings[0]["color"] == "#0000ff"
 
+    @pytest.mark.xfail(reason="Removed with Canvas2D compositor in 2026-04-19 unified viewer; uint8 data range is now dtype range [0,255] not pixel values — delete in Phase 2")
     def test_channel_settings_reflect_data_range(self):
         """Data range should match actual array min/max."""
         viewer = BioImageViewer()
@@ -143,6 +146,7 @@ class TestDimensionTraitlets:
         viewer = BioImageViewer()
         assert viewer._tile_size == 256
 
+    @pytest.mark.xfail(reason="Removed with Canvas2D compositor in 2026-04-19 unified viewer; use_jpeg_tiles traitlet deleted — delete in Phase 2")
     def test_use_jpeg_tiles_default(self):
         viewer = BioImageViewer()
         assert viewer.use_jpeg_tiles is False
@@ -160,6 +164,7 @@ class TestDimensionTraitlets:
 class TestImageDataOutput:
     """Test that image_data contains valid base64 PNG."""
 
+    @pytest.mark.xfail(reason="Removed with Canvas2D compositor in 2026-04-19 unified viewer; image_data stays '' (Viv renders GPU-side) — delete in Phase 2")
     def test_image_data_is_valid_png(self):
         viewer = BioImageViewer()
         arr = np.random.randint(0, 255, (32, 32), dtype=np.uint8)
@@ -168,6 +173,7 @@ class TestImageDataOutput:
         img = Image.open(BytesIO(base64.b64decode(viewer.image_data)))
         assert img.size == (32, 32)
 
+    @pytest.mark.xfail(reason="Removed with Canvas2D compositor in 2026-04-19 unified viewer; image_data stays '' — delete in Phase 2")
     def test_white_image_not_all_black(self):
         """Non-zero image data should produce non-black display."""
         viewer = BioImageViewer()
@@ -177,6 +183,7 @@ class TestImageDataOutput:
         pixels = np.array(img)
         assert pixels.max() == 255  # Should have white pixels
 
+    @pytest.mark.xfail(reason="Removed with Canvas2D compositor in 2026-04-19 unified viewer; image_data stays '' — delete in Phase 2")
     def test_gradient_image_has_range(self):
         """Gradient image should produce output with tonal range."""
         viewer = BioImageViewer()
@@ -187,6 +194,7 @@ class TestImageDataOutput:
         assert pixels.min() == 0
         assert pixels.max() == 255
 
+    @pytest.mark.xfail(reason="Removed with Canvas2D compositor in 2026-04-19 unified viewer; image_data stays '' — delete in Phase 2")
     def test_uint16_gradient_normalizes_to_full_range(self):
         """uint16 data should normalize to fill 0-255 range."""
         viewer = BioImageViewer()
@@ -275,8 +283,8 @@ class TestRenderBackendSelection:
 
         viewer = BioImageViewer()
         assert viewer._render_backend == "canvas2d"
-        # ESM should be the Canvas2D source
-        assert "tileCache" in viewer._esm  # a Canvas2D-only symbol
+        # ESM should be the Canvas2D source (stub in this worktree)
+        assert viewer._esm is not None and len(viewer._esm) > 0
 
     def test_explicit_canvas2d_backend(self):
         from anybioimage import BioImageViewer
@@ -309,6 +317,7 @@ class TestVivTraitlets:
         viewer = BioImageViewer()
         assert viewer._zarr_source == {}
 
+    @pytest.mark.xfail(reason="Removed with Canvas2D compositor in 2026-04-19 unified viewer; _viv_mode traitlet deleted — delete in Phase 2")
     def test_viv_mode_defaults_to_viv(self):
         from anybioimage import BioImageViewer
 
@@ -321,6 +330,7 @@ class TestVivTraitlets:
         viewer = BioImageViewer()
         assert viewer._pixel_info is None
 
+    @pytest.mark.xfail(reason="Removed with Canvas2D compositor in 2026-04-19 unified viewer; _viv_mode traitlet deleted — delete in Phase 2")
     def test_viv_traitlets_sync_tagged(self):
         from anybioimage import BioImageViewer
 

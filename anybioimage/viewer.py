@@ -1,8 +1,5 @@
 """BioImageViewer - Main anywidget for viewing bioimages with multi-dimensional support."""
 
-import threading
-from concurrent.futures import ThreadPoolExecutor
-
 import anywidget
 import traitlets
 
@@ -143,15 +140,12 @@ class BioImageViewer(
     # Viewer layout
     canvas_height = traitlets.Int(800).tag(sync=True)
 
-    # Tile-based loading
+    # Tile-based loading (Canvas2D legacy — kept for backward compat until Task 18)
     _tile_size = traitlets.Int(256).tag(sync=True)
     _tile_request = traitlets.Dict(allow_none=True).tag(sync=True)
     _tiles_data = traitlets.Dict({}).tag(sync=True)
     _use_tile_mode = traitlets.Bool(False).tag(sync=True)  # Set by JS when tile mode is active
     _cache_progress = traitlets.Float(0.0).tag(sync=True)  # 0.0–1.0 background cache fill progress
-    use_jpeg_tiles = traitlets.Bool(False).tag(sync=True)  # Opt-in lossy JPEG tiles (smaller payload for remote Jupyter)
-    # Viewport tile range sent by JS on pan/zoom — used to prioritise precompute
-    _viewport_tiles = traitlets.Dict({}).tag(sync=True)
 
     # Auto-contrast request/response
     _auto_contrast_request = traitlets.Dict(allow_none=True).tag(sync=True)
@@ -166,54 +160,34 @@ class BioImageViewer(
 
     # Viv backend state (all sync=True so JS sees changes).
     _zarr_source = traitlets.Dict({}).tag(sync=True)
-    # "viv" when rendering zarr through Viv; "canvas2d-fallback" when non-zarr input was passed.
-    _viv_mode = traitlets.Unicode("viv").tag(sync=True)
     # Pixel-intensity readout from JS hover; None when pointer is outside the canvas.
     _pixel_info = traitlets.Dict(allow_none=True, default_value=None).tag(sync=True)
+
+    # NEW traitlets for unified pipeline
+    _pixel_source_mode = traitlets.Unicode("none").tag(sync=True)   # "none"|"zarr"|"chunk_bridge"
+    _image_shape = traitlets.Dict(allow_none=True, default_value=None).tag(sync=True)
+    _image_dtype = traitlets.Unicode("Uint16").tag(sync=True)
+    _display_mode = traitlets.Unicode("composite").tag(sync=True)   # "composite"|"single"
+    pixel_size_um = traitlets.Float(allow_none=True, default_value=None).tag(sync=True)
+    scale_bar_visible = traitlets.Bool(True).tag(sync=True)
 
     def __init__(self, *, render_backend: str = "canvas2d", **kwargs):
         super().__init__(**kwargs)
         self._mask_arrays = {}  # Store raw label arrays by mask id
         self._mask_caches = {}  # Cache rendered versions by mask id
-        self._bioimage = None  # Store BioImage reference for lazy loading
         self._plate_path = None  # HCS plate zarr path
         self._plate_store = None
         self._plate_metadata = None
         self._plate_well_paths = []
         self._current_well_path = None
         self._current_well_fov_paths = []
-        self._full_array = None  # Full TCZYX array when image fits in RAM
-        self._slice_cache = {}  # LRU cache for slice data: (T, C, Z) -> np.ndarray
-        self._slice_cache_max_size = 128  # Max number of cached slices
-        self._composite_cache = {}  # (t, z, res) -> uint8 RGB composite of full slice
-        self._composite_cache_max_size = 64  # Max cached composites (overridden dynamically in _set_bioimage)
-        self._composite_cache_lock = threading.Lock()
-        self._tile_cache = {}  # (t, z, tx, ty, res) -> base64 PNG
-        self._tile_cache_max_size = 2048  # Max cached tiles (~400MB for your dataset)
-        self._tile_cache_lock = threading.Lock()
-        self._prefetch_executor = ThreadPoolExecutor(max_workers=6)  # Background prefetching
-        self._precompute_event = None   # threading.Event to cancel background precompute
-        self._precompute_future = None  # Future for the running precompute task
-        self._pyramid = None            # list[np.ndarray | None] of TCZYX levels (synthetic pyramid)
-        self._pyramid_has_native = False  # True if image has native resolution levels
 
         # Observer for SAM label deletion
         self.observe(self._on_delete_sam_at, names=["_delete_sam_at"])
 
-        # Observers for dimension changes
-        self.observe(self._on_dimension_change, names=["current_t", "current_z"])
-        self.observe(self._on_resolution_change, names=["current_resolution"])
-        self.observe(self._on_scene_change, names=["current_scene"])
+        # Observers for plate navigation
         self.observe(self._on_well_change, names=["current_well"])
         self.observe(self._on_fov_change, names=["current_fov"])
-        self.observe(self._on_channel_settings_change, names=["_channel_settings"])
-
-        # Observer for tile-based loading
-        self.observe(self._on_tile_request, names=["_tile_request"])
-        self.observe(self._on_viewport_change, names=["_viewport_tiles"])
-        self.observe(self._on_auto_contrast_request, names=["_auto_contrast_request"])
-        self.observe(self._on_histogram_request, names=["_histogram_request"])
-        self.observe(self._on_jpeg_toggle, names=["use_jpeg_tiles"])
 
         from .backends import get_backend_esm
         self._render_backend = render_backend
@@ -235,10 +209,6 @@ class BioImageViewer(
 
     def close(self):
         """Clean up resources when the widget is closed."""
-        if self._precompute_event is not None:
-            self._precompute_event.set()
-        if self._prefetch_executor is not None:
-            self._prefetch_executor.shutdown(wait=False)
         super().close()
 
     # _esm is assigned per-instance in __init__ based on render_backend.

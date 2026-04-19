@@ -153,24 +153,6 @@ class PlateLoadingMixin:
 
         image_path = f"{self._plate_path}/{self._current_well_path}/{fov}"
 
-        if getattr(self, "_render_backend", "canvas2d") == "viv":
-            try:
-                self._set_zarr_url(image_path)
-                return
-            except Exception as e:
-                logger.info(
-                    "Viv plate-FOV load failed (%s); falling back to Canvas2D", e
-                )
-                self._viv_mode = "canvas2d-fallback"
-
-        try:
-            import bioio_ome_zarr
-            from bioio import BioImage
-
-            img = BioImage(image_path, reader=bioio_ome_zarr.Reader)
-            self._set_bioimage(img)
-        except ImportError:
-            raise ImportError(
-                "bioio and bioio-ome-zarr are required for plate loading. "
-                "Install with: pip install bioio bioio-ome-zarr"
-            )
+        # Plate FOV paths are always zarr (within a plate store), so bypass suffix detection
+        # and call _set_zarr_url directly.
+        self._set_zarr_url(image_path, {})
