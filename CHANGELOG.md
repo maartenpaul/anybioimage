@@ -7,7 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased] — targeting v0.7.0
 
-### Added
+### Added — Phase 2 (Annotate MVP)
+
+- Unified `_annotations` traitlet — single list of typed entries with
+  `id`, `kind`, `geometry`, `label`, `color`, `visible`, `t`, `z`,
+  `created_at`, `metadata`.
+- Back-compat DataFrame properties `rois_df`, `polygons_df`, `points_df`
+  are now read/write views filtered by `kind` over `_annotations`. Existing
+  notebooks keep working unchanged.
+- Interactive drawing tools: **Rect** (drag), **Polygon** (click vertices,
+  double-click / Enter to close, Esc to cancel), **Point** (click).
+- Tool registry + `InteractionController` — one module per tool; pointer /
+  key events dispatch through a single controller.
+- Annotation layers rendered via deck.gl `PolygonLayer` + `ScatterplotLayer`
+  mounted between the image layer and the scale bar; selected annotation
+  is highlighted with a thicker stroke.
+- Mask overlay transport switched from base64 PNG inside `_masks_data` to
+  raw RGBA bytes via anywidget message buffers. `_masks_data` entries now
+  carry metadata only. JS requests bytes lazily via `{kind:"mask_request"}`.
+- New `MasksSection` and `AnnotationsSection` in the Layers panel with
+  per-item visibility / opacity / color / contour / delete controls.
+- SAM hookup: when `sam_enabled` is true, committing a rectangle or point
+  sends `{kind: "sam_rect" | "sam_point"}` to Python; SAM runs and the
+  produced mask arrives via the new mask transport.
+- Demo notebook sections 7 (Annotations walkthrough) and 8 (SAM walkthrough,
+  conditionally shown based on `ultralytics` availability).
+
+### Removed (Breaking) — Phase 2
+
+- `_rois_data`, `_polygons_data`, `_points_data` traitlets (private; no
+  back-compat shim) — superseded by `_annotations`.
+- `rois_visible`, `roi_color`, `polygons_visible`, `polygon_color`,
+  `points_visible`, `point_color`, `point_radius` traitlets — per-kind
+  styling now lives per-annotation in the unified list.
+
+### Added — Phase 1 (Unified Pipeline)
 - Single rendering pipeline based on Viv + deck.gl (WebGL2) handling every input format (remote OME-Zarr, local OME-Zarr, numpy, bioio TIFF/CZI/ND2).
 - `AnywidgetPixelSource` — chunk bridge between the browser and Python's in-RAM numpy array.
 - 15-LUT registry with GPU-side colormap sampling (`gray`, `viridis`, `plasma`, `magma`, `inferno`, `cividis`, `turbo`, `hot`, `cool`, `red`, `green`, `blue`, `cyan`, `magenta`, `yellow`).
