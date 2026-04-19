@@ -14,7 +14,7 @@ await build({
   platform: 'browser',
   minify: true,
   sourcemap: false,
-  loader: { '.js': 'jsx', '.jsx': 'jsx', '.png': 'dataurl' },
+  loader: { '.js': 'jsx', '.jsx': 'jsx' },
   jsx: 'automatic',
   define: { 'process.env.NODE_ENV': '"production"' },
   logLevel: 'info',
