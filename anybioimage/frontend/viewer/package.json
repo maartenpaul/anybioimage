@@ -6,7 +6,8 @@
   "type": "module",
   "scripts": {
     "build": "node build.config.mjs",
-    "size": "size-limit"
+    "size": "size-limit",
+    "test": "vitest run"
   },
   "dependencies": {
     "@hms-dbmi/viv": "0.17.3",
@@ -15,10 +16,12 @@
     "react-dom": "18.3.1"
   },
   "devDependencies": {
-    "esbuild": "0.25.0",
-    "size-limit": "11.1.6",
     "@size-limit/esbuild": "11.1.6",
-    "@size-limit/file": "11.1.6"
+    "@size-limit/file": "11.1.6",
+    "esbuild": "0.25.0",
+    "jsdom": "^29.0.2",
+    "size-limit": "11.1.6",
+    "vitest": "^4.1.4"
   },
   "overrides": {
     "@luma.gl/core": "9.0.28",
