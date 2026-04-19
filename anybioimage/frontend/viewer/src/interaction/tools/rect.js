@@ -55,20 +55,19 @@ export const rectTool = {
     if ((x1 - x0) < 2 || (y1 - y0) < 2) return;   // discard micro drags
     const t = ctx.model.get('current_t') ?? 0;
     const z = ctx.model.get('current_z') ?? 0;
+    const id = makeId();
     const entry = {
-      id: makeId(),
-      kind: 'rect',
-      geometry: [x0, y0, x1, y1],
-      label: '',
-      color: '#ff0000',
-      visible: true,
-      t, z,
-      created_at: new Date().toISOString(),
-      metadata: {},
+      id, kind: 'rect', geometry: [x0, y0, x1, y1],
+      label: '', color: '#ff0000', visible: true, t, z,
+      created_at: new Date().toISOString(), metadata: {},
     };
     const existing = ctx.model.get('_annotations') || [];
     ctx.model.set('_annotations', [...existing, entry]);
     ctx.model.save_changes();
+    if (ctx.model.get('sam_enabled')) {
+      ctx.model.send({ kind: 'sam_rect', id, x: x0, y: y0,
+                       width: x1 - x0, height: y1 - y0, t, z });
+    }
   },
 
   onKeyDown(event, ctx) {

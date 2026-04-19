@@ -13,6 +13,14 @@ export function LayersPanel({ model }) {
       <ImageSection model={model} />
       <MasksSection model={model} />
       <AnnotationsSection model={model} />
+      <div className="layer-item" style={{ padding: '6px 8px', display: 'flex', alignItems: 'center', gap: 6, fontSize: 13 }}>
+        <input
+          type="checkbox"
+          checked={!!model.get('sam_enabled')}
+          onChange={(e) => { model.set('sam_enabled', e.target.checked); model.save_changes(); }}
+        />
+        <span>Use SAM on next rect / point</span>
+      </div>
       <ExportFooter model={model} />
     </div>
   );

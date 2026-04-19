@@ -132,6 +132,9 @@ class BioImageViewer(
     # SAM label deletion - set coordinates to delete SAM label at that position
     _delete_sam_at = traitlets.Dict(allow_none=True).tag(sync=True)
 
+    # SAM toggle surfaced to JS [spec §5 — Phase 2 hookup].
+    sam_enabled = traitlets.Bool(False).tag(sync=True)
+
     # Viewer layout
     canvas_height = traitlets.Int(800).tag(sync=True)
 
@@ -215,6 +218,10 @@ class BioImageViewer(
             mid = content.get("id")
             if mid:
                 self.remove_mask(mid)
+        elif kind == "sam_rect":
+            self.handle_sam_rect(content)
+        elif kind == "sam_point":
+            self.handle_sam_point(content)
 
     def close(self):
         """Clean up resources when the widget is closed."""

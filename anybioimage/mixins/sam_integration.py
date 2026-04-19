@@ -74,6 +74,7 @@ class SAMIntegrationMixin:
 
         self._sam_model = SAM(model_files[model_type])
         self._sam_enabled = True
+        self.sam_enabled = True
         self._sam_model_type = model_type
         self._processed_roi_ids = set()
         self._processed_point_ids = set()
@@ -87,6 +88,7 @@ class SAMIntegrationMixin:
     def disable_sam(self):
         """Disable SAM segmentation and clean up resources."""
         self._sam_enabled = False
+        self.sam_enabled = False
         self._sam_model = None
         self._sam_mask_id = None
         self._sam_labels_array = None
@@ -148,6 +150,33 @@ class SAMIntegrationMixin:
         coords = change.get("new")
         if coords and isinstance(coords, dict) and "x" in coords and "y" in coords:
             self.delete_sam_label_at(int(coords["x"]), int(coords["y"]))
+
+    def handle_sam_rect(self, payload: dict) -> None:
+        """JS asked for a SAM mask from a rectangle.
+
+        payload = {kind: "sam_rect", id, x, y, width, height, t, z}
+        """
+        if not getattr(self, "_sam_enabled", False):
+            return
+        rec = {
+            "id": str(payload.get("id", f"sam_rect_{id(payload)}")),
+            "x": float(payload["x"]), "y": float(payload["y"]),
+            "width": float(payload["width"]), "height": float(payload["height"]),
+        }
+        self._on_rois_changed({"new": [rec]})
+
+    def handle_sam_point(self, payload: dict) -> None:
+        """JS asked for a SAM mask from a point.
+
+        payload = {kind: "sam_point", id, x, y, t, z}
+        """
+        if not getattr(self, "_sam_enabled", False):
+            return
+        rec = {
+            "id": str(payload.get("id", f"sam_point_{id(payload)}")),
+            "x": float(payload["x"]), "y": float(payload["y"]),
+        }
+        self._on_points_changed({"new": [rec]})
 
     def _on_annotations_changed(self, change):
         """Run SAM on any new rect or point in `_annotations`.

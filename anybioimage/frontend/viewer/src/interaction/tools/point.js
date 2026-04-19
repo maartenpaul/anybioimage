@@ -38,6 +38,9 @@ export const pointTool = {
     const existing = ctx.model.get('_annotations') || [];
     ctx.model.set('_annotations', [...existing, entry]);
     ctx.model.save_changes();
+    if (ctx.model.get('sam_enabled')) {
+      ctx.model.send({ kind: 'sam_point', id: entry.id, x: event.x, y: event.y, t, z });
+    }
   },
 
   onKeyDown() {},
