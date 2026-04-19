@@ -112,7 +112,7 @@ class ImageLoadingMixin:
         tczyx = _to_tczyx(arr)
         self._chunk_array = tczyx
         t, c, z, y, x = tczyx.shape
-        self._image_shape = {"t": t, "c": c, "z": z, "y": y, "x": x}
+        self._image_shape = [int(t), int(c), int(z), int(y), int(x)]
         self._image_dtype = _DTYPE_TO_JS.get(str(tczyx.dtype), "Uint16")
         self.dim_t = t; self.dim_c = c; self.dim_z = z
         self.width = x; self.height = y

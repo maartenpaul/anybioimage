@@ -167,7 +167,7 @@ class BioImageViewer(
 
     # NEW traitlets for unified pipeline
     _pixel_source_mode = traitlets.Unicode("none").tag(sync=True)   # "none"|"zarr"|"chunk_bridge"
-    _image_shape = traitlets.Dict(allow_none=True, default_value=None).tag(sync=True)
+    _image_shape = traitlets.List(allow_none=True, default_value=None).tag(sync=True)
     _image_dtype = traitlets.Unicode("Uint16").tag(sync=True)
     _display_mode = traitlets.Unicode("composite").tag(sync=True)   # "composite"|"single"
     pixel_size_um = traitlets.Float(allow_none=True, default_value=None).tag(sync=True)

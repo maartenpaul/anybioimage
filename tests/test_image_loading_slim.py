@@ -12,7 +12,7 @@ def test_set_numpy_creates_chunk_bridge_mode():
     v = BioImageViewer()
     v.set_image(np.zeros((3, 2, 1, 100, 100), dtype=np.uint16))
     assert v._pixel_source_mode == "chunk_bridge"
-    assert v._image_shape == {"t": 3, "c": 2, "z": 1, "y": 100, "x": 100}
+    assert v._image_shape == [3, 2, 1, 100, 100]
     assert v._image_dtype == "Uint16"
     assert v._chunk_array is not None
     assert v.image_data == ""

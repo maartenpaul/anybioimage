@@ -56,11 +56,12 @@ export function DeckCanvas({ model, onHover, deckRef, sourcesRef, selectionsRef 
     async function run() {
       setError(null);
       if (pixelSourceMode === 'chunk_bridge') {
-        const shape = model.get('_image_shape') || null;
+        const shapeArr = model.get('_image_shape') || null;
         const dtype = model.get('_image_dtype') || 'Uint16';
-        if (!shape) { setSources(null); return; }
+        if (!shapeArr || shapeArr.length !== 5) { setSources(null); return; }
+        const [t, c, z, y, x] = shapeArr;
         activeAnywidgetSource = new AnywidgetPixelSource(model, {
-          shape, dtype, tileSize: 512,
+          shape: { t, c, z, y, x }, dtype, tileSize: 512,
         });
         setSources([activeAnywidgetSource]);
       } else if (zarrSource?.url) {
