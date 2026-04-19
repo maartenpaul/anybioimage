@@ -108,5 +108,37 @@ def _display_features(mo):
     return
 
 
+@app.cell
+def _perf(mo):
+    import numpy as _np_perf
+    from anybioimage import BioImageViewer as _BioImageViewerPerf
+
+    _v_perf = _BioImageViewerPerf()
+    _data_perf = _np_perf.random.randint(0, 65535, size=(10, 3, 5, 1024, 1024), dtype=_np_perf.uint16)
+    _v_perf.set_image(_data_perf)
+
+    mo.md("""
+    ## 6 — Performance cell
+
+    This cell measures the Phase-1 budget from the spec. Click through the widget
+    to drive the metrics (T slider scrub, channel slider drag, etc.); the
+    numbers update at the rate JS receives events.
+
+    **Budget targets (spec §10):**
+
+    | Metric | Target |
+    |---|---|
+    | Pan / zoom steady | 60 fps |
+    | Channel slider drag → GPU | ≤16 ms |
+    | T slider scrub (in-RAM) | ≤30 ms |
+    | Cold tile fetch (local) | ≤30 ms |
+
+    Open browser devtools performance panel while exercising the widget to
+    capture detailed frame-timing numbers for a formal regression run.
+    """)
+    _ = mo.ui.anywidget(_v_perf)
+    return
+
+
 if __name__ == "__main__":
     app.run()
