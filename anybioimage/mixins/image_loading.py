@@ -17,9 +17,20 @@ _DTYPE_TO_JS = {
     "uint32": "Uint32", "float32": "Float32",
 }
 
+_URL_SCHEMES = ("http://", "https://", "s3://", "gs://", "file://")
+
 
 def _looks_like_zarr_url(s: str) -> bool:
+    """Return True only for strings that are BOTH a URL (with an explicit
+    scheme zarrita.js can fetch from the browser) AND point at a .zarr path.
+
+    Filesystem paths ending in `.zarr` are NOT URLs — zarrita cannot fetch
+    them from a browser context. Those go through the bioio path instead.
+    """
     if not isinstance(s, str):
+        return False
+    lower = s.lower()
+    if not lower.startswith(_URL_SCHEMES):
         return False
     stripped = s.split("?", 1)[0].split("#", 1)[0].rstrip("/").lower()
     return stripped.endswith(_ZARR_SUFFIXES)

@@ -55,8 +55,9 @@ class ScaleBarLayer extends CompositeLayer {
       new TextLayer({
         id: `${this.props.id}-label`,
         data: [{ position: screenToWorld((barXstart + barXend) / 2, barY - 10) }],
+        // deck.gl's default font atlas is ASCII-only; use "um" for µm.
         getText: () => microns >= 1000 ? `${microns / 1000} mm`
-                      : microns < 1 ? `${microns * 1000} nm` : `${microns} µm`,
+                      : microns < 1 ? `${microns * 1000} nm` : `${microns} um`,
         getPosition: (d) => d.position,
         getColor: [255, 255, 255, 230],
         sizeUnits: 'pixels',

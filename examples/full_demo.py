@@ -34,7 +34,7 @@ def _local_numpy(mo):
     import numpy as _np
     from anybioimage import BioImageViewer as _BioImageViewer
     _rng = _np.random.default_rng(0)
-    _data = _rng.integers(0, 65535, size=(3, 2, 1, 256, 256), dtype=_np.uint16)
+    _data = _rng.integers(0, 65535, size=(3, 2, 1, 1024, 1024), dtype=_np.uint16)
     _v = _BioImageViewer()
     _v.set_image(_data)
     mo.md("## 1 — Numpy array (chunk bridge)")
@@ -76,7 +76,7 @@ def _hcs_plate(mo):
     from anybioimage import BioImageViewer as _BioImageViewer4
     _v4 = _BioImageViewer4()
     try:
-        _v4.set_plate("https://uk1s3.embassy.ebi.ac.uk/idr/zarr/v0.4/idr0125A/6001240.zarr")
+        _v4.set_plate("https://uk1s3.embassy.ebi.ac.uk/idr/zarr/v0.4/idr0001A/2551.zarr")
         _ = mo.vstack([
             mo.md("## 4 — HCS plate (Well + FOV dropdowns)"),
             mo.ui.anywidget(_v4),
