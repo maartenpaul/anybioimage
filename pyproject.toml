@@ -79,7 +79,6 @@ exclude = [
 ]
 
 [tool.hatch.build.targets.wheel.force-include]
-"anybioimage/frontend/shared/canvas2d.js" = "anybioimage/frontend/shared/canvas2d.js"
 "anybioimage/frontend/viewer/dist/viewer-bundle.js" = "anybioimage/frontend/viewer/dist/viewer-bundle.js"
 
 [tool.hatch.build.hooks.jupyter-builder]
