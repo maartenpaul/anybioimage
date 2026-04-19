@@ -2,50 +2,58 @@
 
 Planned features and improvements for anybioimage, organized by milestone.
 
-## Viv backend (WebGL2 rendering for OME-Zarr)
-
-### Delivered
+## Delivered
 
 | Release | Description |
 |---|---|
-| v0.7.0-alpha | Core zarr rendering + HCS plates (**delivered**) |
+| v0.7.0 | **Unified pipeline + channel LUTs + scale bar + metadata panel + pixel-info hover** — single WebGL2 rendering path (Viv + deck.gl) for every input format: remote OME-Zarr, local OME-Zarr, numpy, bioio TIFF/CZI/ND2. 15-LUT registry, per-channel gamma, scale bar, pixel-info hover, metadata panel. |
 
-### Planned
-
-| Release | Adds on Viv backend |
-|---|---|
-| v0.7.1 | Read-only mask overlays |
-| v0.7.2 | Annotations + SAM |
-| v0.7.3 | MIP / projections |
-| v0.8.0 | Measurement, annotation editing, undo/redo (Canvas2D first, port) |
-| v0.8.x | Orthogonal views |
-| v0.9.0 | OMERO data source (its own spec + plan cycle) |
-| v1.0 | Volume raycasting |
+Previously planned in v0.4.0 (colormap/LUT, scale bar, pixel info) are delivered in v0.7.0.
 
 ---
 
-## v0.4.0 — Display Enhancements
+## Phase 2 — Overlays
 
-- **Colormap / LUT support** — Standard scientific colormaps (viridis, plasma, magma, inferno, etc.) in addition to basic channel colors. Allow users to select colormaps per channel.
-- **Scale bar display** — Render a physical scale bar on the canvas using pixel size metadata from BioImage objects.
-- **Pixel info on hover** — Show coordinates (x, y) and intensity values under the cursor in a status bar.
+| Release | Description |
+|---|---|
+| v0.7.1 | Read-only mask overlays on the unified pipeline |
+| v0.7.2 | Annotations + SAM on the unified pipeline |
 
-## v0.5.0 — Measurement & Annotation Improvements
+---
 
+## Phase 3 — Measurement & Editing
+
+Merges v0.7.3 (projections, deferred) + v0.5.0 items:
+
+- **MIP / projections** — Maximum intensity projection and orthogonal views.
 - **Measurement tools** — Distance (line), area (polygon), and intensity line profile tools with results displayed in the UI.
 - **Image metadata panel** — Display file info, dimensions, pixel size, and acquisition metadata in a sidebar panel.
 - **Undo/redo for annotations** — Maintain an undo stack for annotation creation, deletion, and modification.
-- **Annotation editing** — Modify existing annotations: move vertices, resize rectangles, reposition points.
+- **Annotation editing** — Modify existing annotations: move vertices, resize rectangles, reposition points (via `nebula.gl`).
 - **Export annotations UI** — Built-in buttons to export annotations as CSV or JSON files directly from the widget.
+
+---
+
+## v0.8.x — Extended Sources
+
+| Release | Description |
+|---|---|
+| v0.8.0 | Measurement, annotation editing, undo/redo |
+| v0.8.x | Orthogonal views |
+| v0.9.0 | OMERO data source (its own spec + plan cycle) |
+
+---
 
 ## v1.0 — Stability & Ecosystem
 
 - **Touch / mobile support** — Touch event handlers for tablets: pinch-to-zoom, drag-to-pan, long-press context actions.
 - **ARIA accessibility** — Proper ARIA labels, roles, and keyboard navigation for all interactive controls (toolbar buttons, sliders, panels).
-- **3D volume rendering** — Basic volume visualization beyond Z-slice navigation (maximum intensity projection, orthogonal views).
+- **Volume raycasting** — Full 3D volume visualization beyond Z-slice navigation.
 - **CSS custom properties** — Refactor hardcoded colors to CSS variables for theming and dark mode improvements.
 - **Plugin architecture** — Allow dynamic feature registration beyond static mixins, enabling third-party extensions.
 - **Multi-view / linked views** — Side-by-side synchronized panels for comparing channels, timepoints, or different images.
+
+---
 
 ## Contributing
 

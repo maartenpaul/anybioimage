@@ -5,27 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased — v0.7.0-alpha
+## [Unreleased] — targeting v0.7.0
 
 ### Added
-- `render_backend="viv"` opt-in for WebGL2 rendering of OME-Zarr images via Viv + zarrita.js.
-- `_zarr_source`, `_viv_mode`, `_pixel_info` traitlets for the Viv data-flow.
-- Metadata-only zarr load path (no Python precompute or PNG encoding on the Viv path).
-- Pixel-intensity hover readout (`_pixel_info`).
-- Automatic silent fallback to Canvas2D for non-zarr inputs.
+- Single rendering pipeline based on Viv + deck.gl (WebGL2) handling every input format (remote OME-Zarr, local OME-Zarr, numpy, bioio TIFF/CZI/ND2).
+- `AnywidgetPixelSource` — chunk bridge between the browser and Python's in-RAM numpy array.
+- 15-LUT registry with GPU-side colormap sampling (`gray`, `viridis`, `plasma`, `magma`, `inferno`, `cividis`, `turbo`, `hot`, `cool`, `red`, `green`, `blue`, `cyan`, `magenta`, `yellow`).
+- Per-channel **Composite** / **Single** display mode toggle (Fiji-style).
+- Per-channel **gamma** slider.
+- **Scale bar** overlay (auto-sized, reads `pixel_size_um` from bioio / OME).
+- **Pixel-info hover** readout in the status bar (JS-only, throttled 60 Hz).
+- **Metadata panel** in the Layers sidebar.
+- Full keyboard shortcut map (`←/→` T, `↑/↓` Z, `[ ]` channel, `V/P` tools, `,/.` brightness).
 
 ### Changed
-- Canvas2D ESM source moved from inline string in `viewer.py` to `anybioimage/frontend/shared/canvas2d.js`. Behaviour is byte-identical.
+- Rendering is now WebGL2-only. Browsers without WebGL2 see a guidance message instead of the widget.
+- `pip install anybioimage` still requires no Node toolchain; the committed bundle `anybioimage/frontend/viewer/dist/viewer-bundle.js` ships in the wheel.
 
-### Build
-- Added `hatch-jupyter-builder` / Node 20 step to the publish workflow.
-- Added bundle freshness + `size-limit` CI guards (4 MB gzip cap).
-
-### Known limitations in v0.7.0-alpha
-- No channel panel UI on the Viv path yet (min/max/contrast sliders land in v0.7.1).
-- T slider may not always trigger a full re-render in edge cases; being investigated.
-- Mask overlays, annotations, SAM deferred to v0.7.1–v0.7.2.
-- Non-zarr inputs passed to a Viv-backed viewer display a fallback notice instead of rendering. Use `render_backend="canvas2d"` (default) for TIFF/numpy/non-zarr inputs.
+### Removed (Breaking)
+- `render_backend` kwarg is accepted for one release with a `DeprecationWarning`; it is ignored. Will be removed in v0.8.0.
+- `_viv_mode`, `_viewport_tiles`, `use_jpeg_tiles` traitlets — these were private and have no user-facing replacement.
+- Canvas2D compositor (`anybioimage/frontend/shared/canvas2d.js`, `_composite_cache`, `_tile_cache`, `_precompute_*`, `_update_slice`, PNG encoding helpers).
+- `examples/image_notebook.py` → replaced by `examples/full_demo.py`.
 
 ## [0.3.0]
 
