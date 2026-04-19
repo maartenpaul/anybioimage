@@ -24,7 +24,7 @@ def _():
     rng = np.random.default_rng(42)
     # 3 channels × 256 × 256 uint16 — small enough to render fast, big
     # enough to have non-black pixels.
-    img = rng.integers(10000, 50000, size=(1, 3, 1, 256, 256), dtype=np.uint16)
+    img = rng.integers(10000, 50000, size=(5, 3, 3, 256, 256), dtype=np.uint16)
 
     viewer = BioImageViewer()
     viewer.set_image(img)
