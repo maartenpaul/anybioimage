@@ -2,7 +2,7 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import DeckGL from '@deck.gl/react';
 import { OrthographicView } from '@deck.gl/core';
-import { MultiscaleImageLayer } from '@hms-dbmi/viv';
+import { MultiscaleImageLayer, getDefaultInitialViewState } from '@hms-dbmi/viv';
 
 import { openOmeZarr } from './pixel-sources/zarr-source.js';
 import { AnywidgetPixelSource } from './pixel-sources/anywidget-source.js';
@@ -84,16 +84,8 @@ export function DeckCanvas({ model, onHover, deckRef, sourcesRef, selectionsRef 
   // Reset view on new source.
   useEffect(() => {
     if (!sources || !sources.length) return;
-    const level0 = sources[0];
-    const shape = level0.shape;
-    const h = shape[shape.length - 2];
-    const w = shape[shape.length - 1];
-    const zoom = Math.log2(Math.min(width / w, height / h) || 1);
-    setViewState({
-      target: [w / 2, h / 2, 0],
-      zoom,
-      rotationX: 0, rotationOrbit: 0,
-    });
+    const vs = getDefaultInitialViewState(sources, { width, height }, 0);
+    setViewState(vs);
   }, [sources, width, height]);
 
   // Expose refs for other parts of App (e.g. hover handler) without re-rendering on every change.
@@ -117,11 +109,8 @@ export function DeckCanvas({ model, onHover, deckRef, sourcesRef, selectionsRef 
     const handler = (content) => {
       if (!content || content.kind !== 'reset-view') return;
       if (!sources || !sources.length) return;
-      const shape = sources[0].shape;
-      const h = shape[shape.length - 2];
-      const w = shape[shape.length - 1];
-      const zoom = Math.log2(Math.min(width / w, height / h) || 1);
-      setViewState({ target: [w / 2, h / 2, 0], zoom, rotationX: 0, rotationOrbit: 0 });
+      const vs = getDefaultInitialViewState(sources, { width, height }, 0);
+      setViewState(vs);
     };
     model.on('msg:custom', handler);
     return () => model.off('msg:custom', handler);
