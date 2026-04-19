@@ -10,9 +10,9 @@ import { makeHoverHandler } from './render/onHoverPixelInfo.js';
 import { InteractionController } from './interaction/InteractionController.js';
 import { panTool } from './interaction/tools/pan.js';
 import { selectTool } from './interaction/tools/select.js';
-import { rectTool } from './interaction/tools/rect.js';
-import { polygonTool } from './interaction/tools/polygon.js';
-import { pointTool } from './interaction/tools/point.js';
+import { makeRectTool } from './interaction/tools/rect.js';
+import { makePolygonTool } from './interaction/tools/polygon.js';
+import { makePointTool } from './interaction/tools/point.js';
 import { MaskSourceBridge } from './render/pixel-sources/MaskSourceBridge.js';
 
 export function App({ model }) {
@@ -23,13 +23,22 @@ export function App({ model }) {
   const deckRef = useRef(null);
   const rootRef = useRef(null);
 
+  // Each App instance creates its own tool objects so that draw state (drag
+  // coords, in-progress polygon vertices) is never shared between two widgets
+  // displayed on the same page [spec §5.4].
   const controller = useMemo(() => {
+    const rectTool = makeRectTool();
+    const polygonTool = makePolygonTool();
+    const pointTool = makePointTool();
     const c = new InteractionController(model);
     c.register(panTool);
     c.register(selectTool);
     c.register(rectTool);
     c.register(polygonTool);
     c.register(pointTool);
+    // Stash refs so the tool_mode handler below can call reset().
+    c._rectTool = rectTool;
+    c._polygonTool = polygonTool;
     return c;
   }, [model]);
 
@@ -38,8 +47,8 @@ export function App({ model }) {
 
   useEffect(() => {
     const handler = () => {
-      rectTool.reset();
-      polygonTool.reset();
+      controller._rectTool?.reset();
+      controller._polygonTool?.reset();
     };
     model.on('change:tool_mode', handler);
     return () => model.off('change:tool_mode', handler);

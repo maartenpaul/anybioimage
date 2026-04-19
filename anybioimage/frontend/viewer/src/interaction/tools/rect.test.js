@@ -4,7 +4,7 @@ vi.mock('@deck.gl/layers', () => {
   class PolygonLayer { constructor(props) { this.props = props; } }
   return { PolygonLayer };
 });
-import { rectTool } from './rect.js';
+import { makeRectTool } from './rect.js';
 
 function fakeModel() {
   const state = { _annotations: [], current_t: 0, current_z: 0 };
@@ -21,11 +21,13 @@ function ctx(model, controller = { markPreviewDirty: vi.fn() }) {
   return { model, controller };
 }
 
-describe('rectTool', () => {
+describe('makeRectTool', () => {
   let model;
+  let rectTool;
   beforeEach(() => {
     model = fakeModel();
-    rectTool.reset();
+    // Each test gets a fresh tool instance — no shared module state.
+    rectTool = makeRectTool();
   });
 
   it('preview layer is null before any pointer down', () => {
@@ -67,5 +69,17 @@ describe('rectTool', () => {
     rectTool.onPointerUp({ x: 50, y: 60 }, ctx(model));
     expect(model._state._annotations).toHaveLength(0);
     expect(rectTool.getPreviewLayer(ctx(model))).toBeNull();
+  });
+
+  it('two tool instances have independent drag state', () => {
+    const model2 = fakeModel();
+    const tool2 = makeRectTool();
+    // Start drag in tool1
+    rectTool.onPointerDown({ x: 10, y: 20 }, ctx(model));
+    rectTool.onPointerMove({ x: 40, y: 60 }, ctx(model));
+    // tool2 is idle — no preview
+    expect(tool2.getPreviewLayer(ctx(model2))).toBeNull();
+    // tool1 still has active drag
+    expect(rectTool.getPreviewLayer(ctx(model))).not.toBeNull();
   });
 });
