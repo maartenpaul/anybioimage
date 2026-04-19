@@ -26,9 +26,16 @@ export class AnywidgetPixelSource {
     this._level = level;
     this._tileSize = tileSize;
     this._dtype = dtype;
-    this._shape = shape;
+    // Accept shape as either array [t,c,z,y,x] or object {t,c,z,y,x}
+    this._shape = Array.isArray(shape)
+      ? { t: shape[0], c: shape[1], z: shape[2], y: shape[3], x: shape[4] }
+      : shape;
     this._labels = labels || ['t', 'c', 'z', 'y', 'x'];
     this._pending = new Map();
+
+    // rAF batching for coalescing rapid tile requests
+    this._pendingBatch = [];
+    this._rafId = null;
 
     // Register a single listener; multiplex by requestId.
     // anywidget exposes custom messages on 'msg:custom'.
@@ -56,6 +63,11 @@ export class AnywidgetPixelSource {
       entry.reject(new Error('pixel source destroyed'));
     }
     this._pending.clear();
+    if (this._rafId !== null) {
+      cancelAnimationFrame(this._rafId);
+      this._rafId = null;
+    }
+    this._pendingBatch = [];
   }
 
   get shape() {
@@ -64,6 +76,24 @@ export class AnywidgetPixelSource {
   get labels() { return this._labels; }
   get tileSize() { return this._tileSize; }
   get dtype() { return this._dtype; }
+
+  _flush() {
+    this._rafId = null;
+    const batch = this._pendingBatch.splice(0);
+    for (const item of batch) {
+      this._model.send({
+        kind: 'chunk',
+        requestId: item.requestId,
+        t: item.t,
+        c: item.c,
+        z: item.z,
+        level: item.level,
+        tx: item.tx,
+        ty: item.ty,
+        tileSize: item.tileSize,
+      });
+    }
+  }
 
   async getTile({ x, y, selection, signal }) {
     const requestId = _nextRequestId++;
@@ -80,8 +110,7 @@ export class AnywidgetPixelSource {
         resolve: (val) => { if (signal) signal.removeEventListener('abort', onAbort); resolve(val); },
         reject: (err) => { if (signal) signal.removeEventListener('abort', onAbort); reject(err); },
       });
-      this._model.send({
-        kind: 'chunk',
+      this._pendingBatch.push({
         requestId,
         t: selection.t | 0,
         c: selection.c | 0,
@@ -91,7 +120,15 @@ export class AnywidgetPixelSource {
         ty: y | 0,
         tileSize: this._tileSize,
       });
+      if (this._rafId === null) {
+        this._rafId = requestAnimationFrame(() => this._flush());
+      }
     });
+  }
+
+  onTileError(err) {
+    if (err && err.message === 'aborted') return;
+    throw err;
   }
 
   async getRaster({ selection, signal }) {
