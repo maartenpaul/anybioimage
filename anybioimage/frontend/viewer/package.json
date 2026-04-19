@@ -1,8 +1,8 @@
 {
-  "name": "anybioimage-viv-bundle",
+  "name": "anybioimage-viewer-bundle",
   "version": "0.7.0-alpha.0",
   "private": true,
-  "description": "Viv + zarrita.js rendering bundle for anybioimage",
+  "description": "Viv rendering bundle for anybioimage",
   "type": "module",
   "scripts": {
     "build": "node build.config.mjs",
@@ -10,7 +10,6 @@
   },
   "dependencies": {
     "@hms-dbmi/viv": "0.17.3",
-    "zarrita": "0.5.1",
     "deck.gl": "9.0.38",
     "react": "18.3.1",
     "react-dom": "18.3.1"
@@ -32,7 +31,7 @@
   },
   "size-limit": [
     {
-      "path": "dist/viv-bundle.js",
+      "path": "dist/viewer-bundle.js",
       "limit": "4 MB"
     }
   ]
