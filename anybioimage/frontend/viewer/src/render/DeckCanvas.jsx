@@ -157,20 +157,42 @@ export function DeckCanvas({ model, onHover, controller, maskBridge, deckRef, so
     () => (controller ? controller.getPreviewLayer() : null),
     [controller, previewTick, toolMode]);
 
+  // Per-type sub-memos [spec §6.1] — each rebuild is scoped to the traits
+  // that actually feed it. Channel toggles change imageLayerProps only;
+  // mask / annotation / preview / scaleBar memos don't rerun.
+
+  const imageLayerMemo = useMemo(() => trace('layers:image', () => {
+    if (!imageLayerProps || !imageVisible) return null;
+    return new MultiscaleImageLayer({ id: 'viv-image', viewportId: 'ortho', ...imageLayerProps });
+  }), [imageLayerProps, imageVisible]);
+
+  const maskLayersMemo = useMemo(
+    () => trace('layers:masks', () => maskLayers.slice()),
+    [maskLayers]);
+
+  const annotationLayersMemo = useMemo(
+    () => trace('layers:annotations', () => annotationLayers.slice()),
+    [annotationLayers]);
+
+  const previewLayerMemo = useMemo(
+    () => trace('layers:preview', () => previewLayer),
+    [previewLayer]);
+
+  const scaleBarLayerMemo = useMemo(() => trace('layers:scaleBar', () => {
+    if (!(scaleBarVisible && pixelSizeUm)) return null;
+    return buildScaleBarLayer({ pixelSizeUm, viewState, width, height });
+  }), [scaleBarVisible, pixelSizeUm, viewState, width, height]);
+
+  // Final assembly — cheap array concat, no layer construction here.
   const layers = useMemo(() => trace('layers:build', () => {
     const out = [];
-    if (imageLayerProps && imageVisible) {
-      out.push(new MultiscaleImageLayer({ id: 'viv-image', viewportId: 'ortho', ...imageLayerProps }));
-    }
-    for (const l of maskLayers) out.push(l);
-    for (const l of annotationLayers) out.push(l);
-    if (previewLayer) out.push(previewLayer);
-    if (scaleBarVisible && pixelSizeUm) {
-      out.push(buildScaleBarLayer({ pixelSizeUm, viewState, width, height }));
-    }
+    if (imageLayerMemo) out.push(imageLayerMemo);
+    for (const l of maskLayersMemo) out.push(l);
+    for (const l of annotationLayersMemo) out.push(l);
+    if (previewLayerMemo) out.push(previewLayerMemo);
+    if (scaleBarLayerMemo) out.push(scaleBarLayerMemo);
     return out;
-  }), [imageLayerProps, imageVisible, maskLayers, annotationLayers, previewLayer,
-      pixelSizeUm, scaleBarVisible, viewState, width, height]);
+  }), [imageLayerMemo, maskLayersMemo, annotationLayersMemo, previewLayerMemo, scaleBarLayerMemo]);
 
   function imagePixelFor(info) {
     const coord = info?.coordinate;
