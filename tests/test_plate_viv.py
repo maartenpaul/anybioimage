@@ -13,7 +13,7 @@ TEST_PLATE = Path(__file__).parent.parent / "examples" / "test_plate.zarr"
 def plate_viewer():
     if not TEST_PLATE.is_dir():
         pytest.skip(f"{TEST_PLATE} missing (run examples/create_test_plate.py)")
-    viewer = BioImageViewer(render_backend="viv")
+    viewer = BioImageViewer()
     viewer.set_plate(str(TEST_PLATE))
     return viewer
 

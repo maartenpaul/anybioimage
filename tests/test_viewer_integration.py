@@ -278,36 +278,44 @@ class TestAnnotationDataFrameEdgeCases:
 
 
 class TestRenderBackendSelection:
-    def test_default_backend_is_canvas2d(self):
+    def test_single_bundle_esm_loaded(self):
+        """BioImageViewer._esm must be a non-empty string from the viewer bundle."""
         from anybioimage import BioImageViewer
 
         viewer = BioImageViewer()
-        assert viewer._render_backend == "canvas2d"
-        # ESM should be the Canvas2D source (stub in this worktree)
-        assert viewer._esm is not None and len(viewer._esm) > 0
+        assert isinstance(viewer._esm, str)
+        assert len(viewer._esm) > 10_000  # bundle is ~1.8 MB minified
 
-    def test_explicit_canvas2d_backend(self):
-        from anybioimage import BioImageViewer
-
-        viewer = BioImageViewer(render_backend="canvas2d")
-        assert viewer._render_backend == "canvas2d"
-
-    def test_viv_backend_selected(self):
-        from anybioimage import BioImageViewer
-
-        viewer = BioImageViewer(render_backend="viv")
-        assert viewer._render_backend == "viv"
-        # Real Viv bundle is ~3 MB; minified form uses "export{X as default}"
-        assert len(viewer._esm) > 10_000  # stub is ~40 chars
-        assert "as default}" in viewer._esm or "export default" in viewer._esm
-
-    def test_unknown_backend_raises_valueerror(self):
-        import pytest
+    def test_render_backend_kwarg_warns(self):
+        """Passing render_backend triggers DeprecationWarning but does not raise."""
+        import warnings
 
         from anybioimage import BioImageViewer
 
-        with pytest.raises(ValueError, match="unknown render_backend"):
-            BioImageViewer(render_backend="vulkan")
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            viewer = BioImageViewer(render_backend="canvas2d")
+            assert any(issubclass(w.category, DeprecationWarning) for w in caught)
+        assert viewer is not None
+
+    def test_no_render_backend_attribute(self):
+        """_render_backend traitlet has been removed from the unified viewer."""
+        from anybioimage import BioImageViewer
+
+        viewer = BioImageViewer()
+        assert not hasattr(viewer, "_render_backend")
+
+    def test_unknown_backend_kwarg_warns_not_raises(self):
+        """Unknown render_backend value warns but no longer raises ValueError."""
+        import warnings
+
+        from anybioimage import BioImageViewer
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            viewer = BioImageViewer(render_backend="vulkan")
+            assert any(issubclass(w.category, DeprecationWarning) for w in caught)
+        assert viewer is not None
 
 
 class TestVivTraitlets:

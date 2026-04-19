@@ -1,5 +1,8 @@
 """BioImageViewer - Main anywidget for viewing bioimages with multi-dimensional support."""
 
+import warnings
+from importlib.resources import files
+
 import anywidget
 import traitlets
 
@@ -11,6 +14,8 @@ from .mixins import (
     PlateLoadingMixin,
     SAMIntegrationMixin,
 )
+
+_BUNDLE = files("anybioimage.frontend.viewer.dist").joinpath("viewer-bundle.js").read_text(encoding="utf-8")
 
 
 class BioImageViewer(
@@ -140,7 +145,7 @@ class BioImageViewer(
     # Viewer layout
     canvas_height = traitlets.Int(800).tag(sync=True)
 
-    # Tile-based loading (Canvas2D legacy — kept for backward compat until Task 18)
+    # Tile-based loading
     _tile_size = traitlets.Int(256).tag(sync=True)
     _tile_request = traitlets.Dict(allow_none=True).tag(sync=True)
     _tiles_data = traitlets.Dict({}).tag(sync=True)
@@ -155,9 +160,6 @@ class BioImageViewer(
     _histogram_request = traitlets.Dict(allow_none=True).tag(sync=True)
     _histogram_data = traitlets.Dict(allow_none=True).tag(sync=True)
 
-    # Rendering backend — set at construction, not swappable mid-session.
-    _render_backend = traitlets.Unicode("canvas2d").tag(sync=True)
-
     # Viv backend state (all sync=True so JS sees changes).
     _zarr_source = traitlets.Dict({}).tag(sync=True)
     # Pixel-intensity readout from JS hover; None when pointer is outside the canvas.
@@ -171,8 +173,17 @@ class BioImageViewer(
     pixel_size_um = traitlets.Float(allow_none=True, default_value=None).tag(sync=True)
     scale_bar_visible = traitlets.Bool(True).tag(sync=True)
 
-    def __init__(self, *, render_backend: str = "canvas2d", **kwargs):
-        super().__init__(**kwargs)
+    _esm = _BUNDLE
+
+    def __init__(self, *args, render_backend=None, **kwargs):
+        if render_backend is not None:
+            warnings.warn(
+                "BioImageViewer now uses a single rendering pipeline; the "
+                "`render_backend` kwarg is ignored and will be removed in a "
+                "future release.",
+                DeprecationWarning, stacklevel=2,
+            )
+        super().__init__(*args, **kwargs)
         self._mask_arrays = {}  # Store raw label arrays by mask id
         self._mask_caches = {}  # Cache rendered versions by mask id
         self._plate_path = None  # HCS plate zarr path
@@ -188,10 +199,6 @@ class BioImageViewer(
         # Observers for plate navigation
         self.observe(self._on_well_change, names=["current_well"])
         self.observe(self._on_fov_change, names=["current_fov"])
-
-        from .backends import get_backend_esm
-        self._render_backend = render_backend
-        self._esm = get_backend_esm(render_backend)
 
         self.on_msg(self._route_message)
 
@@ -210,9 +217,6 @@ class BioImageViewer(
     def close(self):
         """Clean up resources when the widget is closed."""
         super().close()
-
-    # _esm is assigned per-instance in __init__ based on render_backend.
-    # See anybioimage.backends for the registry.
 
     _css = """
     .bioimage-viewer {
