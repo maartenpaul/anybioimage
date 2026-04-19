@@ -13,7 +13,25 @@ function isEditableTarget(el) {
   return false;
 }
 
-export function installKeyboard(model) {
+/**
+ * Install keyboard shortcuts on a specific DOM element so that two widgets on
+ * the same page do not fight each other [spec §5.2].
+ *
+ *   installKeyboard(model, containerEl)
+ *     model       — the anywidget model for this viewer instance
+ *     containerEl — the focusable root (tabIndex=0) of this widget; the
+ *                   listener is attached here, not on window
+ *
+ * Returns a disposer that removes the listener.
+ */
+export function installKeyboard(model, containerEl) {
+  if (!containerEl) {
+    // Defensive: if the caller forgot to pass an element, do nothing and
+    // return a no-op disposer. Fail loudly via console so we notice.
+    console.error('installKeyboard: containerEl is required (spec §5.2)');
+    return () => {};
+  }
+
   function wrap(v, n) { return ((v % n) + n) % n; }
 
   function handler(e) {
@@ -49,6 +67,6 @@ export function installKeyboard(model) {
     if (consumed) { model.save_changes(); e.preventDefault(); }
   }
 
-  window.addEventListener('keydown', handler);
-  return () => window.removeEventListener('keydown', handler);
+  containerEl.addEventListener('keydown', handler);
+  return () => containerEl.removeEventListener('keydown', handler);
 }

@@ -115,3 +115,30 @@ def widget(page, marimo_server):
     handle = WidgetHandle(page, widget_index=0)
     handle.wait_for_ready(timeout_ms=30000)
     return handle
+
+
+@pytest.fixture(scope="session")
+def marimo_server_two():
+    """Session-scoped two-widget notebook."""
+    port = _pick_port()
+    proc, url = _start_marimo(FIXTURES_DIR / "demo_two_widgets.py", port)
+    yield url
+    proc.terminate()
+    try:
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+
+
+@pytest.fixture
+def widgets_two(page, marimo_server_two):
+    """Load demo_two_widgets.py; return (WidgetHandle(0), WidgetHandle(1))."""
+    from tests.integration.helpers.widget import WidgetHandle
+
+    page.goto(marimo_server_two)
+    page.wait_for_load_state("networkidle")
+    a = WidgetHandle(page, widget_index=0)
+    b = WidgetHandle(page, widget_index=1)
+    a.wait_for_ready(timeout_ms=30000)
+    b.wait_for_ready(timeout_ms=30000)
+    return (a, b)

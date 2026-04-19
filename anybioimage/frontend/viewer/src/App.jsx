@@ -21,6 +21,7 @@ export function App({ model }) {
   const sourcesRef = useRef(null);
   const selectionsRef = useRef(null);
   const deckRef = useRef(null);
+  const rootRef = useRef(null);
 
   const controller = useMemo(() => {
     const c = new InteractionController(model);
@@ -52,10 +53,14 @@ export function App({ model }) {
     }),
     []);
 
-  useEffect(() => installKeyboard(model), [model]);
+  // Scope keyboard handler to THIS widget's root div [spec §5.2].
+  useEffect(() => {
+    if (!rootRef.current) return;
+    return installKeyboard(model, rootRef.current);
+  }, [model]);
 
   return (
-    <div className="bioimage-viewer" tabIndex={0}>
+    <div ref={rootRef} className="bioimage-viewer" tabIndex={0}>
       <Toolbar model={model} onToggleLayers={() => setPanelOpen((v) => !v)} panelOpen={panelOpen} />
       <DimControls model={model} />
       <div className="content-area" style={{ display: 'flex', flex: 1, minHeight: 500 }}>
