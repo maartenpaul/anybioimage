@@ -41,30 +41,33 @@ class PixelSourceMixin:
     # ---- tile read ----
     def _read_tile_raw(self, t: int, c: int, z: int, level: int,
                        tx: int, ty: int, tile: int) -> tuple[np.ndarray, str]:
-        """Return (view, dtype_str). Subclasses may override for lazy bioio reads.
+        """Return (view, dtype_str) — partial edge tiles are NOT padded.
 
-        Raises IndexError for out-of-bounds.
+        Viv's MultiscaleImageLayer detects partial tiles via
+        ``data.height < base.tileSize`` and adjusts sublayer bounds
+        accordingly, so we return the raw clipped extent.
+
+        Raises IndexError for tiles whose origin is past the image extent.
         """
         arr = self._chunk_array
         if arr is None:
             raise IndexError("no chunk array set")
         if level != 0:
-            # Phase-1 synthetic downsample: nearest-neighbour ::step ::step.
             step = 2 ** level
             y0 = ty * tile * step
             x0 = tx * tile * step
-            y1 = min(y0 + tile * step, arr.shape[3])
-            x1 = min(x0 + tile * step, arr.shape[4])
             if y0 >= arr.shape[3] or x0 >= arr.shape[4]:
                 raise IndexError("tile out of bounds")
+            y1 = min(y0 + tile * step, arr.shape[3])
+            x1 = min(x0 + tile * step, arr.shape[4])
             sub = arr[t, c, z, y0:y1:step, x0:x1:step]
         else:
             y0 = ty * tile
             x0 = tx * tile
-            y1 = min(y0 + tile, arr.shape[3])
-            x1 = min(x0 + tile, arr.shape[4])
             if y0 >= arr.shape[3] or x0 >= arr.shape[4]:
                 raise IndexError("tile out of bounds")
+            y1 = min(y0 + tile, arr.shape[3])
+            x1 = min(x0 + tile, arr.shape[4])
             sub = arr[t, c, z, y0:y1, x0:x1]
         if not sub.flags["C_CONTIGUOUS"]:
             sub = np.ascontiguousarray(sub)

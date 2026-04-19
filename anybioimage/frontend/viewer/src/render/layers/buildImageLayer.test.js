@@ -60,7 +60,7 @@ describe('buildImageLayerProps', () => {
     expect(props.extensions.length).toBe(1);
   });
 
-  it('omits extensions when only solid-colour channels', () => {
+  it('omits extensions/colormap keys entirely when only solid-colour channels', () => {
     const solidChannels = [
       { index: 0, visible: true, color_kind: 'solid', color: '#ff0000',
         data_min: 0, data_max: 255, min: 0, max: 1 },
@@ -68,7 +68,8 @@ describe('buildImageLayerProps', () => {
     const props = buildImageLayerProps({
       sources, channels: solidChannels, currentT: 0, currentZ: 0, displayMode: 'composite',
     });
-    expect(props.extensions).toBeUndefined();
-    expect(props.colormap).toBeUndefined();
+    // Passing extensions: undefined would clobber Viv's default — verify absence.
+    expect('extensions' in props).toBe(false);
+    expect('colormap' in props).toBe(false);
   });
 });

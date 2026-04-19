@@ -40,16 +40,20 @@ export function buildImageLayerProps({
   const channelsVisible = clipped.map(() => true);
 
   const lutChannel = clipped.find((ch) => ch.color_kind === 'lut');
-  const extensions = lutChannel ? [ADDITIVE_COLORMAP_EXT] : undefined;
-  const colormap = lutChannel ? (lutChannel.lut || 'viridis') : undefined;
 
-  return {
+  // Only override Viv's default extension when we actually want a colormap.
+  // Passing `extensions: undefined` overrides the default array with undefined
+  // and breaks MultiscaleImageLayer initialization ("extensions is not iterable").
+  const props = {
     loader: sources,
     selections,
     colors,
     contrastLimits,
     channelsVisible,
-    extensions,
-    colormap,
   };
+  if (lutChannel) {
+    props.extensions = [ADDITIVE_COLORMAP_EXT];
+    props.colormap = lutChannel.lut || 'viridis';
+  }
+  return props;
 }

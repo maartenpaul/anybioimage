@@ -20,6 +20,22 @@ const VIV_TO_ARRAY = {
 
 let _nextRequestId = 1;
 
+/**
+ * anywidget delivers buffers as ArrayBuffer or DataView depending on the
+ * transport. Build a typed-array view of the correct length in either case.
+ */
+function toTypedArray(buf, Ctor) {
+  if (!buf) return new Ctor(0);
+  if (buf instanceof ArrayBuffer) {
+    return new Ctor(buf, 0, buf.byteLength / Ctor.BYTES_PER_ELEMENT);
+  }
+  // ArrayBuffer view (DataView or TypedArray).
+  const backing = buf.buffer;
+  const offset = buf.byteOffset | 0;
+  const length = (buf.byteLength | 0) / Ctor.BYTES_PER_ELEMENT;
+  return new Ctor(backing, offset, length);
+}
+
 export class AnywidgetPixelSource {
   constructor(model, { shape, dtype, tileSize = 512, level = 0, labels }) {
     this._model = model;
@@ -48,10 +64,11 @@ export class AnywidgetPixelSource {
         return;
       }
       const Ctor = VIV_TO_ARRAY[this._dtype] || Uint8Array;
-      const view = buffers && buffers[0]
-        ? new Ctor(buffers[0])
-        : new Ctor(0);
-      entry.resolve({ data: view, width: content.w, height: content.h });
+      entry.resolve({
+        data: toTypedArray(buffers && buffers[0], Ctor),
+        width: content.w,
+        height: content.h,
+      });
     };
     model.on('msg:custom', this._listener);
   }

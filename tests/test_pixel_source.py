@@ -41,6 +41,8 @@ def test_chunk_ok_returns_raw_bytes_and_metadata() -> None:
 
 
 def test_chunk_edge_tile_clipped_to_array_bounds() -> None:
+    """Edge tiles return only the in-bounds extent; Viv handles partial
+    tiles via data.height < tileSize in its sublayer renderer."""
     arr = np.zeros((1, 1, 1, 600, 600), dtype=np.uint8)
     h = _Harness(arr)
     h.handle_chunk_request({
