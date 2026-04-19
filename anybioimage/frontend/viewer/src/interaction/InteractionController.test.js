@@ -74,3 +74,46 @@ describe('InteractionController', () => {
     expect(sub).toHaveBeenCalled();
   });
 });
+
+describe('setContext', () => {
+  it('injects extra keys into the tool invocation context', () => {
+    const model = { get: () => 'pan', set: () => {}, save_changes: () => {} };
+    const ctrl = new InteractionController(model);
+    let captured = null;
+    ctrl.register({
+      id: 'pan',
+      cursor: 'grab',
+      onPointerDown(event, ctx) { captured = ctx; },
+      onPointerMove() {},
+      onPointerUp() {},
+      onKeyDown() {},
+      getPreviewLayer() { return null; },
+    });
+    const pickObject = () => 'picked!';
+    ctrl.setContext({ pickObject });
+    ctrl.handlePointerEvent('down', { x: 0, y: 0 });
+    expect(captured.pickObject).toBe(pickObject);
+    expect(captured.pickObject()).toBe('picked!');
+  });
+
+  it('setContext merges with existing context and does not lose model', () => {
+    const model = { get: () => 'pan', set: () => {}, save_changes: () => {} };
+    const ctrl = new InteractionController(model);
+    let captured = null;
+    ctrl.register({
+      id: 'pan',
+      cursor: 'grab',
+      onPointerDown(event, ctx) { captured = ctx; },
+      onPointerMove() {},
+      onPointerUp() {},
+      onKeyDown() {},
+      getPreviewLayer() { return null; },
+    });
+    ctrl.setContext({ pickObject: () => null });
+    ctrl.setContext({ extra: 42 });
+    ctrl.handlePointerEvent('down', { x: 0, y: 0 });
+    expect(captured.model).toBe(model);
+    expect(captured.extra).toBe(42);
+    expect(typeof captured.pickObject).toBe('function');
+  });
+});

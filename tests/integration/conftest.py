@@ -36,9 +36,14 @@ def _pick_port() -> int:
 
 
 def _start_marimo(notebook: Path, port: int) -> tuple[subprocess.Popen, str]:
-    """Launch `marimo edit` in headless mode; return (process, url_with_token)."""
+    """Launch `marimo run` in headless mode; return (process, url).
+
+    Uses `marimo run` (read-only app mode) rather than `marimo edit` so that
+    cells execute automatically on the first browser connection without
+    requiring any user interaction.
+    """
     cmd = [
-        sys.executable, "-m", "marimo", "edit",
+        sys.executable, "-m", "marimo", "run",
         str(notebook),
         "--headless",
         "--host", "127.0.0.1",
@@ -56,7 +61,7 @@ def _start_marimo(notebook: Path, port: int) -> tuple[subprocess.Popen, str]:
     while time.time() < deadline:
         try:
             with socket.create_connection(("127.0.0.1", port), timeout=0.5):
-                return proc, f"http://127.0.0.1:{port}/?file={notebook.name}"
+                return proc, f"http://127.0.0.1:{port}/"
         except OSError:
             time.sleep(0.2)
     proc.terminate()

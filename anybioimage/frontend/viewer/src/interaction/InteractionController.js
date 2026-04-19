@@ -10,6 +10,8 @@
  * `getPreviewLayer()` returns a deck.gl Layer (or null) that renders the
  * in-progress draw. `markPreviewDirty()` triggers a re-render in DeckCanvas.
  */
+import { trace } from '../util/perf.js';
+
 const NOOP_TOOL = {
   id: '__noop',
   cursor: 'default',
@@ -26,6 +28,16 @@ export class InteractionController {
     this._tools = new Map();
     this._previewListeners = new Set();
     this._ctx = { model, controller: this };
+  }
+
+  /**
+   * Inject extra keys into the tool-invocation context. Called once from
+   * DeckCanvas after mount to expose `pickObject` to tools. Further calls
+   * merge — existing keys persist unless overridden. [spec §5.1]
+   */
+  setContext(extra) {
+    if (!extra || typeof extra !== 'object') return;
+    this._ctx = { ...this._ctx, ...extra };
   }
 
   register(tool) {
@@ -45,16 +57,18 @@ export class InteractionController {
   }
 
   handlePointerEvent(phase, event) {
-    const tool = this.activeTool;
-    try {
-      if (phase === 'down') tool.onPointerDown(event, this._ctx);
-      else if (phase === 'move') tool.onPointerMove(event, this._ctx);
-      else if (phase === 'up') tool.onPointerUp(event, this._ctx);
-    } catch (err) {
-      // Tools should never throw at runtime; log so we can see regressions
-      // without killing the canvas.
-      console.error(`tool '${tool.id}' threw in ${phase}:`, err);
-    }
+    trace(`interaction:${phase}`, () => {
+      const tool = this.activeTool;
+      try {
+        if (phase === 'down') tool.onPointerDown(event, this._ctx);
+        else if (phase === 'move') tool.onPointerMove(event, this._ctx);
+        else if (phase === 'up') tool.onPointerUp(event, this._ctx);
+      } catch (err) {
+        // Tools should never throw at runtime; log so we can see regressions
+        // without killing the canvas.
+        console.error(`tool '${tool.id}' threw in ${phase}:`, err);
+      }
+    });
   }
 
   handleKeyDown(event) {

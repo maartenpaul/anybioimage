@@ -191,6 +191,15 @@ export function DeckCanvas({ model, onHover, controller, maskBridge, deckRef, so
     return { layer: picked.layer, object: picked.object, sourceAnnotation };
   }
 
+  // Inject pickObject into the interaction controller's tool context
+  // [spec §5.1]. `pickObject` is a new closure every render (it captures
+  // `annotations` and `deckRef`), but setContext just merges into _ctx so
+  // the cost is one object spread per render.
+  useEffect(() => {
+    if (!controller) return;
+    controller.setContext({ pickObject });
+  });  // no dep list — runs every render, matches the closure's capture window
+
   function onClick(info) {
     if (!controller) return;
     const pt = imagePixelFor(info);

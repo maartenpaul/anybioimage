@@ -37,7 +37,16 @@ _GET_TRAIT_JS = """
   }
   const w = widgets[index];
   if (!w) return null;
-  return w._widget?.model?.get(name) ?? null;
+  try {
+    const iv = JSON.parse(w.getAttribute('data-initial-value') || '{}');
+    const modelId = iv.model_id;
+    if (!modelId) return null;
+    const mm = window.__marimo__MODEL_MANAGER;
+    if (!mm || !mm.getSync) return null;
+    const model = mm.getSync(modelId);
+    if (!model) return null;
+    return model.get(name) ?? null;
+  } catch (e) { return null; }
 }
 """
 
@@ -49,10 +58,19 @@ _SET_TRAIT_JS = """
     if (el.tagName === 'MARIMO-ANYWIDGET' && el.shadowRoot) widgets.push(el);
   }
   const w = widgets[index];
-  if (!w || !w._widget?.model) return false;
-  w._widget.model.set(name, value);
-  w._widget.model.save_changes();
-  return true;
+  if (!w) return false;
+  try {
+    const iv = JSON.parse(w.getAttribute('data-initial-value') || '{}');
+    const modelId = iv.model_id;
+    if (!modelId) return false;
+    const mm = window.__marimo__MODEL_MANAGER;
+    if (!mm || !mm.getSync) return false;
+    const model = mm.getSync(modelId);
+    if (!model) return false;
+    model.set(name, value);
+    model.save_changes();
+    return true;
+  } catch (e) { return false; }
 }
 """
 
