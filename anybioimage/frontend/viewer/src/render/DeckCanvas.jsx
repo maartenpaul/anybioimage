@@ -1,18 +1,14 @@
-// anybioimage/frontend/viv/src/VivCanvas.jsx
-import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { PictureInPictureViewer } from '@hms-dbmi/viv';
-import { openOmeZarr } from './pixel-sources/zarr-source.js';
-import { channelSettingsToVivProps, withTimeAndZ } from '../model/channelState.js';
+// anybioimage/frontend/viewer/src/render/DeckCanvas.jsx
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import DeckGL from '@deck.gl/react';
+import { OrthographicView } from '@deck.gl/core';
+import { MultiscaleImageLayer } from '@hms-dbmi/viv';
 
-function useModelTrait(model, name) {
-  const [value, setValue] = useState(() => model.get(name));
-  useEffect(() => {
-    const handler = () => setValue(model.get(name));
-    model.on(`change:${name}`, handler);
-    return () => model.off(`change:${name}`, handler);
-  }, [model, name]);
-  return value;
-}
+import { openOmeZarr } from './pixel-sources/zarr-source.js';
+import { AnywidgetPixelSource } from './pixel-sources/anywidget-source.js';
+import { buildImageLayerProps } from './layers/buildImageLayer.js';
+import { buildScaleBarLayer } from './layers/buildScaleBar.js';
+import { useModelTrait } from '../model/useModelTrait.js';
 
 function useContainerSize(ref, fallback = { width: 800, height: 600 }) {
   const [size, setSize] = useState(fallback);
@@ -30,76 +26,136 @@ function useContainerSize(ref, fallback = { width: 800, height: 600 }) {
     const ro = new ResizeObserver(measure);
     ro.observe(el);
     return () => ro.disconnect();
-  }, [ref, fallback.height, fallback.width]);
+  }, [ref, fallback.width, fallback.height]);
   return size;
 }
 
-export function VivCanvas({ model, resetViewRef, sourcesRef }) {
+export function DeckCanvas({ model, onHover, deckRef, sourcesRef, selectionsRef }) {
   const zarrSource = useModelTrait(model, '_zarr_source');
+  const pixelSourceMode = useModelTrait(model, '_pixel_source_mode');
   const channelSettings = useModelTrait(model, '_channel_settings');
   const currentT = useModelTrait(model, 'current_t');
   const currentZ = useModelTrait(model, 'current_z');
-  const imageVisible = useModelTrait(model, 'image_visible');
+  const displayMode = useModelTrait(model, '_display_mode') || 'composite';
+  const activeChannel = useModelTrait(model, 'current_c') || 0;
+  const pixelSizeUm = useModelTrait(model, 'pixel_size_um');
+  const scaleBarVisible = useModelTrait(model, 'scale_bar_visible') !== false;
+  const imageVisible = useModelTrait(model, 'image_visible') !== false;
 
   const containerRef = useRef(null);
   const { width, height } = useContainerSize(containerRef);
 
   const [sources, setSources] = useState(null);
   const [error, setError] = useState(null);
-  const [resetToken, setResetToken] = useState(0);
+  const [viewState, setViewState] = useState(null);
 
+  // Open the source whenever the mode or url changes.
   useEffect(() => {
-    if (!resetViewRef) return;
-    resetViewRef.fn = () => setResetToken((t) => t + 1);
-    return () => { if (resetViewRef.fn) resetViewRef.fn = null; };
-  }, [resetViewRef]);
-
-  useEffect(() => {
-    const url = zarrSource?.url;
-    if (!url) {
-      setSources(null);
-      return;
-    }
     let cancelled = false;
-    setError(null);
-    openOmeZarr(url, zarrSource.headers || {})
-      .then(({ sources }) => {
-        if (cancelled) return;
-        setSources(sources);
-        if (sourcesRef) sourcesRef.current = sources;
-      })
-      .catch((e) => { if (!cancelled) { setError(String(e)); setSources(null); } });
-    return () => { cancelled = true; };
-  }, [zarrSource?.url]);
+    let activeAnywidgetSource = null;
+    async function run() {
+      setError(null);
+      if (pixelSourceMode === 'chunk_bridge') {
+        const shape = model.get('_image_shape') || null;
+        const dtype = model.get('_image_dtype') || 'Uint16';
+        if (!shape) { setSources(null); return; }
+        activeAnywidgetSource = new AnywidgetPixelSource(model, {
+          shape, dtype, tileSize: 512,
+        });
+        setSources([activeAnywidgetSource]);
+      } else if (zarrSource?.url) {
+        try {
+          const { sources: srcs } = await openOmeZarr(zarrSource.url, zarrSource.headers || {});
+          if (!cancelled) setSources(srcs);
+        } catch (e) {
+          if (!cancelled) { setError(String(e)); setSources(null); }
+        }
+      } else {
+        setSources(null);
+      }
+    }
+    run();
+    return () => {
+      cancelled = true;
+      if (activeAnywidgetSource) activeAnywidgetSource.destroy();
+    };
+  }, [pixelSourceMode, zarrSource?.url]);
 
-  const vivProps = channelSettingsToVivProps(channelSettings || []);
-  const selections = withTimeAndZ(vivProps.selections, currentT || 0, currentZ || 0);
-  const showImage = imageVisible !== false;
+  // Reset view on new source.
+  useEffect(() => {
+    if (!sources || !sources.length) return;
+    const level0 = sources[0];
+    const shape = level0.shape;
+    const h = shape[shape.length - 2];
+    const w = shape[shape.length - 1];
+    const zoom = Math.log2(Math.min(width / w, height / h) || 1);
+    setViewState({
+      target: [w / 2, h / 2, 0],
+      zoom,
+      rotationX: 0, rotationOrbit: 0,
+    });
+  }, [sources, width, height]);
+
+  // Expose refs for other parts of App (e.g. hover handler) without re-rendering on every change.
+  useEffect(() => { if (sourcesRef) sourcesRef.current = sources; }, [sources, sourcesRef]);
+
+  const imageLayerProps = useMemo(() => {
+    if (!sources || !sources.length) return null;
+    return buildImageLayerProps({
+      sources, channels: channelSettings || [],
+      currentT: currentT || 0, currentZ: currentZ || 0,
+      displayMode, activeChannel,
+    });
+  }, [sources, channelSettings, currentT, currentZ, displayMode, activeChannel]);
+
+  useEffect(() => {
+    if (selectionsRef) selectionsRef.current = imageLayerProps?.selections ?? null;
+  }, [imageLayerProps, selectionsRef]);
+
+  // Listen for reset-view messages from the toolbar (added in Task 17).
+  useEffect(() => {
+    const handler = (content) => {
+      if (!content || content.kind !== 'reset-view') return;
+      if (!sources || !sources.length) return;
+      const shape = sources[0].shape;
+      const h = shape[shape.length - 2];
+      const w = shape[shape.length - 1];
+      const zoom = Math.log2(Math.min(width / w, height / h) || 1);
+      setViewState({ target: [w / 2, h / 2, 0], zoom, rotationX: 0, rotationOrbit: 0 });
+    };
+    model.on('msg:custom', handler);
+    return () => model.off('msg:custom', handler);
+  }, [model, sources, width, height]);
+
+  const layers = useMemo(() => {
+    if (!imageLayerProps || !imageVisible) return [];
+    const imageLayer = new MultiscaleImageLayer({ id: 'viv-image', ...imageLayerProps });
+    const out = [imageLayer];
+    if (scaleBarVisible && pixelSizeUm) {
+      out.push(buildScaleBarLayer({ pixelSizeUm, viewState, width, height }));
+    }
+    return out;
+  }, [imageLayerProps, imageVisible, pixelSizeUm, scaleBarVisible, viewState, width, height]);
 
   if (error) {
-    return <div style={{ color: '#b00', padding: 12 }}>Failed to load zarr: {error}</div>;
+    return <div style={{ color: '#b00', padding: 12 }}>Failed to load image: {error}</div>;
   }
 
   return (
     <div ref={containerRef} style={{ position: 'absolute', inset: 0 }}>
       {!sources ? (
-        <div style={{ padding: 12, color: '#666' }}>Loading OME-Zarr…</div>
-      ) : showImage ? (
-        <PictureInPictureViewer
-          key={resetToken}
-          loader={sources}
-          selections={selections}
-          colors={vivProps.colors}
-          contrastLimits={vivProps.contrastLimits}
-          channelsVisible={vivProps.channelsVisible}
-          height={height}
+        <div style={{ padding: 12, color: '#666' }}>Loading…</div>
+      ) : (
+        <DeckGL
+          ref={deckRef}
           width={width}
+          height={height}
+          layers={layers}
+          views={[new OrthographicView({ id: 'ortho', controller: true })]}
+          viewState={viewState ? { ortho: viewState } : undefined}
+          onViewStateChange={({ viewState: v }) => setViewState(v)}
+          onHover={onHover}
         />
-      ) : null}
-      {vivProps.exceeded && (
-        <div style={{ position: 'absolute', top: 8, right: 8, background: '#fbe9a0', padding: '4px 8px', fontSize: 12, borderRadius: 4, zIndex: 10 }}>
-          More than 6 channels — extras hidden.
-        </div>
       )}
     </div>
   );
