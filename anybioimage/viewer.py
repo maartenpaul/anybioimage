@@ -121,21 +121,11 @@ class BioImageViewer(
     # Tool mode
     tool_mode = traitlets.Unicode("pan").tag(sync=True)
 
-    # Annotations
-    _rois_data = traitlets.List(traitlets.Dict()).tag(sync=True)
-    rois_visible = traitlets.Bool(True).tag(sync=True)
-    roi_color = traitlets.Unicode("#ff0000").tag(sync=True)
+    # Annotations — unified list [spec §5].
+    # Each entry: {id, kind, geometry, label, color, visible, t, z, created_at, metadata}
+    _annotations = traitlets.List(traitlets.Dict()).tag(sync=True)
 
-    _polygons_data = traitlets.List(traitlets.Dict()).tag(sync=True)
-    polygons_visible = traitlets.Bool(True).tag(sync=True)
-    polygon_color = traitlets.Unicode("#00ff00").tag(sync=True)
-
-    _points_data = traitlets.List(traitlets.Dict()).tag(sync=True)
-    points_visible = traitlets.Bool(True).tag(sync=True)
-    point_color = traitlets.Unicode("#0066ff").tag(sync=True)
-    point_radius = traitlets.Int(5).tag(sync=True)
-
-    # Selection
+    # Selection (unchanged from Phase 1).
     selected_annotation_id = traitlets.Unicode("").tag(sync=True)
     selected_annotation_type = traitlets.Unicode("").tag(sync=True)
 

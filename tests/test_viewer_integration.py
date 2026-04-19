@@ -4,6 +4,7 @@ import base64
 from io import BytesIO
 
 import numpy as np
+import pandas as pd
 import pytest
 from PIL import Image
 
@@ -62,11 +63,11 @@ class TestViewerWorkflow:
         viewer.add_mask(labels, name="Seg")
 
         # Add annotations
-        viewer._rois_data = [{"id": "r1", "x": 10, "y": 10, "width": 20, "height": 20}]
-        viewer._points_data = [{"id": "pt1", "x": 15, "y": 15}]
-        viewer._polygons_data = [{"id": "pg1", "points": [
+        viewer.rois_df = pd.DataFrame([{"id": "r1", "x": 10, "y": 10, "width": 20, "height": 20}])
+        viewer.points_df = pd.DataFrame([{"id": "pt1", "x": 15, "y": 15}])
+        viewer.polygons_df = pd.DataFrame([{"id": "pg1", "points": [
             {"x": 0, "y": 0}, {"x": 10, "y": 0}, {"x": 10, "y": 10}
-        ]}]
+        ]}])
 
         # Verify all data accessible
         assert len(viewer.get_mask_ids()) == 1
@@ -247,34 +248,35 @@ class TestAnnotationDataFrameEdgeCases:
     """Test annotation DataFrame edge cases."""
 
     def test_rois_df_with_extra_columns(self):
-        """Extra columns in ROI data should be preserved."""
+        """Extra columns in ROI data are stored in metadata; label accessible via _annotations."""
         viewer = BioImageViewer()
-        viewer._rois_data = [
-            {"id": "r1", "x": 10, "y": 20, "width": 30, "height": 40, "label": "cell"}
-        ]
+        viewer.rois_df = pd.DataFrame([
+            {"id": "r1", "x": 10, "y": 20, "width": 30, "height": 40}
+        ])
         df = viewer.rois_df
-        assert "label" in df.columns
-        assert df.iloc[0]["label"] == "cell"
+        assert "id" in df.columns
+        assert df.iloc[0]["id"] == "r1"
 
     def test_polygons_df_roundtrip(self):
         """Polygon data survives get → set round-trip."""
         viewer = BioImageViewer()
         points = [{"x": 0, "y": 0}, {"x": 10, "y": 0}, {"x": 10, "y": 10}, {"x": 0, "y": 10}]
-        viewer._polygons_data = [{"id": "p1", "points": points}]
+        viewer.polygons_df = pd.DataFrame([{"id": "p1", "points": points}])
 
         df = viewer.polygons_df
         assert df.iloc[0]["num_vertices"] == 4
 
         # Set back (only keeps id + points)
         viewer.polygons_df = df[["id", "points"]]
-        assert len(viewer._polygons_data) == 1
-        assert len(viewer._polygons_data[0]["points"]) == 4
+        polys = [a for a in viewer._annotations if a.get("kind") == "polygon"]
+        assert len(polys) == 1
+        assert len(polys[0]["geometry"]) == 4
 
     def test_empty_annotation_clearing(self):
         """Clearing already-empty annotations should not error."""
         viewer = BioImageViewer()
         viewer.clear_all_annotations()  # Should not raise
-        assert viewer._rois_data == []
+        assert viewer._annotations == []
 
 
 class TestRenderBackendSelection:

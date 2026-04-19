@@ -28,8 +28,7 @@ class SAMIntegrationMixin:
         - _mask_arrays: Dict storing raw label arrays by mask id
         - _mask_caches: Dict storing rendered versions by mask id
         - _masks_data: List of mask layer dicts (traitlet)
-        - _rois_data: List of ROI dicts (traitlet)
-        - _points_data: List of point dicts (traitlet)
+        - _annotations: Unified annotations list traitlet [spec §5]
         - _delete_sam_at: Coordinates for SAM label deletion (traitlet)
         - width, height: Image dimensions
         - add_mask: Method to add a mask layer
@@ -82,9 +81,8 @@ class SAMIntegrationMixin:
         self._sam_mask_id = None
         self._sam_labels_array = None
 
-        # Set up observers for ROI and point changes
-        self.observe(self._on_rois_changed, names=["_rois_data"])
-        self.observe(self._on_points_changed, names=["_points_data"])
+        # Phase 2 — observe the unified _annotations traitlet [spec §5].
+        self.observe(self._on_annotations_changed, names=["_annotations"])
 
     def disable_sam(self):
         """Disable SAM segmentation and clean up resources."""
@@ -94,11 +92,7 @@ class SAMIntegrationMixin:
         self._sam_labels_array = None
         self._sam_label_counter = 0
         try:
-            self.unobserve(self._on_rois_changed, names=["_rois_data"])
-        except ValueError:
-            pass  # Observer might not be registered
-        try:
-            self.unobserve(self._on_points_changed, names=["_points_data"])
+            self.unobserve(self._on_annotations_changed, names=["_annotations"])
         except ValueError:
             pass
 
@@ -155,11 +149,38 @@ class SAMIntegrationMixin:
         if coords and isinstance(coords, dict) and "x" in coords and "y" in coords:
             self.delete_sam_label_at(int(coords["x"]), int(coords["y"]))
 
+    def _on_annotations_changed(self, change):
+        """Run SAM on any new rect or point in `_annotations`.
+
+        Dispatches to the existing rect/point handlers. IDs already processed
+        are skipped via `_processed_roi_ids` / `_processed_point_ids`.
+        """
+        if not getattr(self, "_sam_enabled", False):
+            return
+        new_list = change["new"] or []
+        rois = [a for a in new_list if a.get("kind") == "rect"]
+        points = [a for a in new_list if a.get("kind") == "point"]
+        if rois:
+            # translate rect entries back to the {id, x, y, width, height} shape
+            # the existing _on_rois_changed helper expects.
+            legacy = []
+            for a in rois:
+                x0, y0, x1, y1 = a["geometry"]
+                legacy.append({
+                    "id": a["id"], "x": x0, "y": y0,
+                    "width": x1 - x0, "height": y1 - y0,
+                })
+            self._on_rois_changed({"new": legacy})
+        if points:
+            legacy = [{"id": a["id"], "x": a["geometry"][0], "y": a["geometry"][1]}
+                      for a in points]
+            self._on_points_changed({"new": legacy})
+
     def _on_rois_changed(self, change):
-        """Observer callback when ROIs change.
+        """Observer callback when ROIs change (called by _on_annotations_changed).
 
         Args:
-            change: Traitlet change dict
+            change: Dict with "new" key containing list of {id, x, y, width, height} dicts
         """
         if not getattr(self, "_sam_enabled", False):
             return
@@ -176,10 +197,10 @@ class SAMIntegrationMixin:
                 self._run_sam_on_roi(roi)
 
     def _on_points_changed(self, change):
-        """Observer callback when points change.
+        """Observer callback when points change (called by _on_annotations_changed).
 
         Args:
-            change: Traitlet change dict
+            change: Dict with "new" key containing list of {id, x, y} dicts
         """
         if not getattr(self, "_sam_enabled", False):
             return
@@ -256,7 +277,7 @@ class SAMIntegrationMixin:
             if results and len(results) > 0 and results[0].masks is not None:
                 mask_data = results[0].masks.data[0].cpu().numpy().astype(bool)
                 self._add_sam_mask(mask_data)
-                self._rois_data = [r for r in self._rois_data if r["id"] != roi["id"]]
+                self._annotations = [a for a in self._annotations if a.get("id") != roi["id"]]
         except Exception as e:
             logger.warning("SAM prediction failed: %s", e)
 
@@ -279,7 +300,7 @@ class SAMIntegrationMixin:
             if results and len(results) > 0 and results[0].masks is not None:
                 mask_data = results[0].masks.data[0].cpu().numpy().astype(bool)
                 self._add_sam_mask(mask_data)
-                self._points_data = [p for p in self._points_data if p["id"] != point["id"]]
+                self._annotations = [a for a in self._annotations if a.get("id") != point["id"]]
         except Exception as e:
             logger.warning("SAM point prediction failed: %s", e)
 

@@ -348,41 +348,42 @@ class TestAnnotations:
 
     def test_rois_df_with_data(self):
         viewer = BioImageViewer()
-        viewer._rois_data = [
+        viewer.rois_df = pd.DataFrame([
             {"id": "r1", "x": 10, "y": 20, "width": 30, "height": 40},
             {"id": "r2", "x": 5, "y": 15, "width": 25, "height": 35},
-        ]
+        ])
         df = viewer.rois_df
         assert len(df) == 2
         assert df.iloc[0]["x"] == 10
         assert df.iloc[1]["width"] == 25
 
     def test_rois_df_setter(self):
-        """Setting rois_df should update _rois_data traitlet."""
+        """Setting rois_df should update _annotations traitlet."""
         viewer = BioImageViewer()
         df = pd.DataFrame([
             {"id": "r1", "x": 100, "y": 200, "width": 50, "height": 60},
         ])
         viewer.rois_df = df
-        assert len(viewer._rois_data) == 1
-        assert viewer._rois_data[0]["x"] == 100
+        rects = [a for a in viewer._annotations if a.get("kind") == "rect"]
+        assert len(rects) == 1
+        assert rects[0]["geometry"][0] == 100  # x0
 
     def test_rois_df_roundtrip(self):
         """Get → modify → set should preserve data."""
         viewer = BioImageViewer()
-        viewer._rois_data = [
+        viewer.rois_df = pd.DataFrame([
             {"id": "r1", "x": 10, "y": 20, "width": 30, "height": 40},
-        ]
+        ])
         df = viewer.rois_df
         df.loc[0, "x"] = 999
         viewer.rois_df = df
-        assert viewer._rois_data[0]["x"] == 999
+        assert viewer.rois_df.iloc[0]["x"] == 999
 
     def test_polygons_df_with_data(self):
         viewer = BioImageViewer()
-        viewer._polygons_data = [
+        viewer.polygons_df = pd.DataFrame([
             {"id": "p1", "points": [{"x": 0, "y": 0}, {"x": 10, "y": 0}, {"x": 10, "y": 10}]},
-        ]
+        ])
         df = viewer.polygons_df
         assert len(df) == 1
         assert df.iloc[0]["num_vertices"] == 3
@@ -394,16 +395,17 @@ class TestAnnotations:
             {"id": "p1", "points": [{"x": 0, "y": 0}, {"x": 5, "y": 5}]},
         ])
         viewer.polygons_df = df
-        assert len(viewer._polygons_data) == 1
-        assert viewer._polygons_data[0]["id"] == "p1"
-        assert len(viewer._polygons_data[0]["points"]) == 2
+        polys = [a for a in viewer._annotations if a.get("kind") == "polygon"]
+        assert len(polys) == 1
+        assert polys[0]["id"] == "p1"
+        assert len(polys[0]["geometry"]) == 2
 
     def test_points_df_with_data(self):
         viewer = BioImageViewer()
-        viewer._points_data = [
+        viewer.points_df = pd.DataFrame([
             {"id": "pt1", "x": 100, "y": 200},
             {"id": "pt2", "x": 50, "y": 150},
-        ]
+        ])
         df = viewer.points_df
         assert len(df) == 2
         assert df.iloc[0]["x"] == 100
@@ -414,37 +416,35 @@ class TestAnnotations:
             {"id": "pt1", "x": 42, "y": 84},
         ])
         viewer.points_df = df
-        assert viewer._points_data[0]["x"] == 42
+        assert viewer.points_df.iloc[0]["x"] == 42
 
     def test_clear_rois(self):
         viewer = BioImageViewer()
-        viewer._rois_data = [{"id": "r1", "x": 0, "y": 0, "width": 10, "height": 10}]
+        viewer.rois_df = pd.DataFrame([{"id": "r1", "x": 0, "y": 0, "width": 10, "height": 10}])
         viewer.clear_rois()
-        assert viewer._rois_data == []
+        assert viewer.rois_df.empty
 
     def test_clear_polygons(self):
         viewer = BioImageViewer()
-        viewer._polygons_data = [{"id": "p1", "points": []}]
+        viewer.polygons_df = pd.DataFrame([{"id": "p1", "points": [{"x": 0, "y": 0}, {"x": 1, "y": 1}]}])
         viewer.clear_polygons()
-        assert viewer._polygons_data == []
+        assert viewer.polygons_df.empty
 
     def test_clear_points(self):
         viewer = BioImageViewer()
-        viewer._points_data = [{"id": "pt1", "x": 0, "y": 0}]
+        viewer.points_df = pd.DataFrame([{"id": "pt1", "x": 0, "y": 0}])
         viewer.clear_points()
-        assert viewer._points_data == []
+        assert viewer.points_df.empty
 
     def test_clear_all_annotations(self):
         viewer = BioImageViewer()
-        viewer._rois_data = [{"id": "r1", "x": 0, "y": 0, "width": 10, "height": 10}]
-        viewer._polygons_data = [{"id": "p1", "points": []}]
-        viewer._points_data = [{"id": "pt1", "x": 0, "y": 0}]
+        viewer.rois_df = pd.DataFrame([{"id": "r1", "x": 0, "y": 0, "width": 10, "height": 10}])
+        viewer.polygons_df = pd.DataFrame([{"id": "p1", "points": [{"x": 0, "y": 0}, {"x": 1, "y": 1}]}])
+        viewer.points_df = pd.DataFrame([{"id": "pt1", "x": 0, "y": 0}])
         viewer.selected_annotation_id = "r1"
         viewer.selected_annotation_type = "roi"
         viewer.clear_all_annotations()
-        assert viewer._rois_data == []
-        assert viewer._polygons_data == []
-        assert viewer._points_data == []
+        assert viewer._annotations == []
         assert viewer.selected_annotation_id == ""
         assert viewer.selected_annotation_type == ""
 
