@@ -13,6 +13,7 @@ import { selectTool } from './interaction/tools/select.js';
 import { rectTool } from './interaction/tools/rect.js';
 import { polygonTool } from './interaction/tools/polygon.js';
 import { pointTool } from './interaction/tools/point.js';
+import { MaskSourceBridge } from './render/pixel-sources/MaskSourceBridge.js';
 
 export function App({ model }) {
   const [panelOpen, setPanelOpen] = useState(false);
@@ -31,7 +32,9 @@ export function App({ model }) {
     return c;
   }, [model]);
 
-  // Reset per-tool drag state on tool switch — keeps previews from leaking.
+  const maskBridge = useMemo(() => new MaskSourceBridge(model), [model]);
+  useEffect(() => () => maskBridge.destroy(), [maskBridge]);
+
   useEffect(() => {
     const handler = () => {
       rectTool.reset();
@@ -59,6 +62,7 @@ export function App({ model }) {
         <div className="viewport-slot" style={{ position: 'relative', flex: 1, minHeight: 500, background: '#000' }}>
           <DeckCanvas model={model} onHover={onHover}
                       controller={controller}
+                      maskBridge={maskBridge}
                       deckRef={deckRef}
                       sourcesRef={sourcesRef}
                       selectionsRef={selectionsRef} />

@@ -9,6 +9,7 @@ import { AnywidgetPixelSource } from './pixel-sources/anywidget-source.js';
 import { buildImageLayerProps } from './layers/buildImageLayer.js';
 import { buildScaleBarLayer } from './layers/buildScaleBar.js';
 import { annotationsToLayers } from './layers/annotationsToLayers.js';
+import { buildMaskLayers } from './layers/buildMaskLayers.js';
 import { useModelTrait } from '../model/useModelTrait.js';
 
 function useContainerSize(ref, fallback = { width: 800, height: 600 }) {
@@ -31,7 +32,7 @@ function useContainerSize(ref, fallback = { width: 800, height: 600 }) {
   return size;
 }
 
-export function DeckCanvas({ model, onHover, controller, deckRef, sourcesRef, selectionsRef }) {
+export function DeckCanvas({ model, onHover, controller, maskBridge, deckRef, sourcesRef, selectionsRef }) {
   const zarrSource = useModelTrait(model, '_zarr_source');
   const pixelSourceMode = useModelTrait(model, '_pixel_source_mode');
   const channelSettings = useModelTrait(model, '_channel_settings');
@@ -47,6 +48,7 @@ export function DeckCanvas({ model, onHover, controller, deckRef, sourcesRef, se
   const annotations = useModelTrait(model, '_annotations') || [];
   const selectedId = useModelTrait(model, 'selected_annotation_id') || '';
   const toolMode = useModelTrait(model, 'tool_mode') || 'pan';
+  const masks = useModelTrait(model, '_masks_data') || [];
 
   const containerRef = useRef(null);
   const { width, height } = useContainerSize(containerRef);
@@ -55,11 +57,18 @@ export function DeckCanvas({ model, onHover, controller, deckRef, sourcesRef, se
   const [error, setError] = useState(null);
   const [viewState, setViewState] = useState(null);
   const [previewTick, setPreviewTick] = useState(0);
+  const [maskTick, setMaskTick] = useState(0);
 
   useEffect(() => {
     if (!controller) return;
     return controller.onPreviewChange(() => setPreviewTick((t) => t + 1));
   }, [controller]);
+
+  useEffect(() => {
+    if (!maskBridge) return;
+    const unsubs = masks.map((m) => maskBridge.subscribe(m.id, () => setMaskTick((t) => t + 1)));
+    return () => { for (const u of unsubs) u(); };
+  }, [maskBridge, masks]);
 
   useEffect(() => {
     let cancelled = false;
@@ -128,6 +137,10 @@ export function DeckCanvas({ model, onHover, controller, deckRef, sourcesRef, se
     }),
     [annotations, currentT, currentZ, selectedId]);
 
+  const maskLayers = useMemo(
+    () => (maskBridge ? buildMaskLayers({ masks, bridge: maskBridge }) : []),
+    [masks, maskBridge, maskTick]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const previewLayer = useMemo(
     () => (controller ? controller.getPreviewLayer() : null),
     [controller, previewTick, toolMode]);
@@ -137,17 +150,16 @@ export function DeckCanvas({ model, onHover, controller, deckRef, sourcesRef, se
     if (imageLayerProps && imageVisible) {
       out.push(new MultiscaleImageLayer({ id: 'viv-image', viewportId: 'ortho', ...imageLayerProps }));
     }
+    for (const l of maskLayers) out.push(l);
     for (const l of annotationLayers) out.push(l);
     if (previewLayer) out.push(previewLayer);
     if (scaleBarVisible && pixelSizeUm) {
       out.push(buildScaleBarLayer({ pixelSizeUm, viewState, width, height }));
     }
     return out;
-  }, [imageLayerProps, imageVisible, annotationLayers, previewLayer,
+  }, [imageLayerProps, imageVisible, maskLayers, annotationLayers, previewLayer,
       pixelSizeUm, scaleBarVisible, viewState, width, height]);
 
-  // Map screen pixel events to image pixel coordinates using deck.gl's
-  // orthographic unproject. coordinate.length === 2 means [x, y] image pixels.
   function imagePixelFor(info) {
     const coord = info?.coordinate;
     if (!coord) return null;
@@ -163,7 +175,6 @@ export function DeckCanvas({ model, onHover, controller, deckRef, sourcesRef, se
       radius: 4,
     });
     if (!picked) return null;
-    // Link back to the source annotation for the select tool.
     const id = picked.object?.id;
     const sourceAnnotation = id ? annotations.find((a) => a.id === id) : null;
     return { layer: picked.layer, object: picked.object, sourceAnnotation };
@@ -174,7 +185,6 @@ export function DeckCanvas({ model, onHover, controller, deckRef, sourcesRef, se
     const pt = imagePixelFor(info);
     if (!pt) return;
     const ev = { ...pt, screenX: info.x, screenY: info.y, _picked: pickObject(info) };
-    // Point-style tools commit on click; select also commits here.
     controller.handlePointerEvent('down', ev);
     controller.handlePointerEvent('up', ev);
   }
@@ -208,8 +218,6 @@ export function DeckCanvas({ model, onHover, controller, deckRef, sourcesRef, se
     if (tool.onDoubleClick) tool.onDoubleClick(pt, { model, controller, pickObject });
   }
 
-  // Pan is handled by OrthographicView's controller when tool_mode === 'pan';
-  // for other tools we disable the default controller so drag-draw works.
   const viewController = toolMode === 'pan' || toolMode === 'select';
 
   if (error) {
