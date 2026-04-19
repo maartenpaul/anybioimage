@@ -39,7 +39,20 @@ function _build({
 
   const clipped = active.slice(0, MAX_CHANNELS);
 
-  const selections = clipped.map((ch) => ({ t: currentT, c: ch.index, z: currentZ }));
+  // Build selections that match the actual axis labels of the source.
+  // Remote OME-Zarr stores may omit the time axis (e.g. axes=['c','z','y','x']).
+  // Passing { t: ... } for such a source throws "Invalid indexer key: t" inside
+  // Viv's ZarrPixelSource._indexer and the layer renders nothing.
+  // The AnywidgetPixelSource always has labels=['t','c','z','y','x'].
+  const sourceLabels = sources?.[0]?.labels ?? ['t', 'c', 'z', 'y', 'x'];
+  const hasT = sourceLabels.includes('t');
+  const hasZ = sourceLabels.includes('z');
+  const selections = clipped.map((ch) => {
+    const sel = { c: ch.index };
+    if (hasT) sel.t = currentT;
+    if (hasZ) sel.z = currentZ;
+    return sel;
+  });
   const colors = clipped.map((ch) => hexToRgb(ch.color));
   const contrastLimits = clipped.map(contrastFor);
   const channelsVisible = clipped.map(() => true);

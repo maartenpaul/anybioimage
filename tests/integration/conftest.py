@@ -142,3 +142,28 @@ def widgets_two(page, marimo_server_two):
     a.wait_for_ready(timeout_ms=30000)
     b.wait_for_ready(timeout_ms=30000)
     return (a, b)
+
+
+@pytest.fixture(scope="session")
+def marimo_server_remote():
+    """Session-scoped remote-zarr notebook."""
+    port = _pick_port()
+    proc, url = _start_marimo(FIXTURES_DIR / "demo_remote_zarr.py", port)
+    yield url
+    proc.terminate()
+    try:
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+
+
+@pytest.fixture
+def widget_remote(page, marimo_server_remote):
+    from tests.integration.helpers.widget import WidgetHandle
+
+    page.goto(marimo_server_remote)
+    page.wait_for_load_state("networkidle")
+    handle = WidgetHandle(page, widget_index=0)
+    # Remote fetch is slow; give it 60 s to reach _render_ready.
+    handle.wait_for_ready(timeout_ms=60000)
+    return handle

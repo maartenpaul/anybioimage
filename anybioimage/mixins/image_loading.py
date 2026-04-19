@@ -82,6 +82,80 @@ def _channel_settings_from_omero(ome: dict, dim_c: int, dtype: Any = None) -> li
     return out
 
 
+def _fetch_zarr_ome_metadata(url: str, headers: dict) -> tuple[dict, int, str]:
+    """Fetch `.zattrs` from a zarr root URL and return (ome_meta, dim_c, dtype).
+
+    `ome_meta` is the full `.zattrs` dict (contains ``omero`` and
+    ``multiscales`` blocks).  `dim_c` is the number of channels derived from
+    the multiscale axes list.  `dtype` is the numpy dtype string read from the
+    first resolution level's `.zarray` (e.g. ``uint16``).
+
+    Raises on network error or if the response is not parseable JSON.
+    """
+    import json
+    import urllib.error
+    import urllib.request
+
+    base = url.rstrip("/")
+    req = urllib.request.Request(base + "/.zattrs", headers=headers or {})
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        zattrs = json.loads(resp.read().decode())
+
+    # Determine channel count from multiscales axes if available.
+    multiscales = zattrs.get("multiscales") or []
+    axes = []
+    first_dataset_path = None
+    if multiscales:
+        axes = [a.get("name", "") for a in (multiscales[0].get("axes") or [])]
+        datasets = multiscales[0].get("datasets") or []
+        if datasets:
+            first_dataset_path = datasets[0].get("path")
+
+    if "c" in axes:
+        # The channel count is in the data shape, not the axes list.  We need
+        # to read .zarray from the first resolution level to get the shape.
+        if first_dataset_path is not None:
+            try:
+                req2 = urllib.request.Request(
+                    f"{base}/{first_dataset_path}/.zarray", headers=headers or {}
+                )
+                with urllib.request.urlopen(req2, timeout=30) as resp2:
+                    zarray = json.loads(resp2.read().decode())
+                shape = zarray.get("shape", [])
+                c_idx = axes.index("c")
+                dim_c = shape[c_idx] if c_idx < len(shape) else 1
+                dtype_raw = zarray.get("dtype", "<u2")
+            except Exception:
+                dim_c = 1
+                dtype_raw = "<u2"
+        else:
+            dim_c = 1
+            dtype_raw = "<u2"
+    else:
+        # No channel axis — treat as single channel.
+        dim_c = 1
+        dtype_raw = "<u2"
+        if first_dataset_path is not None:
+            try:
+                req2 = urllib.request.Request(
+                    f"{base}/{first_dataset_path}/.zarray", headers=headers or {}
+                )
+                with urllib.request.urlopen(req2, timeout=30) as resp2:
+                    zarray = json.loads(resp2.read().decode())
+                dtype_raw = zarray.get("dtype", "<u2")
+            except Exception:
+                pass
+
+    # Map zarr dtype string → numpy dtype string.
+    import numpy as np
+    try:
+        dtype_str = str(np.dtype(dtype_raw))
+    except Exception:
+        dtype_str = "uint16"
+
+    return zattrs, dim_c, dtype_str
+
+
 class ImageLoadingMixin:
     """Metadata-only image loading. Route `set_image()` to one of three paths."""
 
@@ -113,10 +187,30 @@ class ImageLoadingMixin:
         raise TypeError(f"unsupported image type: {type(data).__name__}")
 
     def _set_zarr_url(self, url: str, headers: dict) -> None:
+        """Set up remote OME-Zarr rendering via the Viv browser-side loader.
+
+        Fetches `.zattrs` from the zarr root to extract OME channel metadata
+        and populate `_channel_settings` before the JS side takes over.
+        Without this, `buildImageLayerProps` receives an empty channel list and
+        Viv renders zero channels → black canvas [spec §5.3].
+        """
         self._clear_image_state()
         self._zarr_source = {"url": url, "headers": headers}
         self._pixel_source_mode = "zarr"
-        # Dim/channel traitlets are populated JS-side from the zarr metadata.
+
+        # Fetch OME metadata from the zarr root so we can build channel
+        # settings immediately.  This is a lightweight HTTP GET of a single
+        # JSON file; it completes before the widget is displayed.
+        try:
+            ome_meta, dim_c, dtype_str = _fetch_zarr_ome_metadata(url, headers)
+            self._channel_settings = _channel_settings_from_omero(
+                ome_meta, dim_c=dim_c, dtype=dtype_str
+            )
+            self.dim_c = dim_c
+        except Exception as exc:
+            logger.warning("Could not pre-fetch OME metadata from %s: %s", url, exc)
+            # Fall back to a single default channel so Viv renders something.
+            self._channel_settings = _channel_settings_from_omero({}, dim_c=1)
 
     def _set_numpy_source(self, arr: np.ndarray) -> None:
         self._clear_image_state()

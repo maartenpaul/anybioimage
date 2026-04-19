@@ -72,4 +72,40 @@ describe('buildImageLayerProps', () => {
     expect('extensions' in props).toBe(false);
     expect('colormap' in props).toBe(false);
   });
+
+  it('omits t from selections when source has no t axis (e.g. remote OME-Zarr with axes=[c,z,y,x])', () => {
+    // IDR zarr 6001240 has axes ['c','z','y','x'] — no time dimension.
+    // Passing { t: ... } to such a source throws "Invalid indexer key: t".
+    const zarrSources = [{ shape: [2, 236, 275, 271], labels: ['c', 'z', 'y', 'x'] }];
+    const props = buildImageLayerProps({
+      sources: zarrSources,
+      channels: [
+        { index: 0, visible: true, color_kind: 'solid', color: '#0000ff',
+          data_min: 0, data_max: 65535, min: 0, max: 1 },
+        { index: 1, visible: true, color_kind: 'solid', color: '#ffff00',
+          data_min: 0, data_max: 65535, min: 0, max: 1 },
+      ],
+      currentT: 0, currentZ: 3, displayMode: 'composite',
+    });
+    // selections must NOT include 't' key — source has no t axis
+    expect(props.selections).toEqual([
+      { c: 0, z: 3 },
+      { c: 1, z: 3 },
+    ]);
+    expect(props.selections[0]).not.toHaveProperty('t');
+  });
+
+  it('omits z from selections when source has no z axis', () => {
+    const flatSources = [{ shape: [1, 3, 512, 512], labels: ['t', 'c', 'y', 'x'] }];
+    const props = buildImageLayerProps({
+      sources: flatSources,
+      channels: [
+        { index: 0, visible: true, color_kind: 'solid', color: '#ff0000',
+          data_min: 0, data_max: 255, min: 0, max: 1 },
+      ],
+      currentT: 2, currentZ: 0, displayMode: 'composite',
+    });
+    expect(props.selections).toEqual([{ t: 2, c: 0 }]);
+    expect(props.selections[0]).not.toHaveProperty('z');
+  });
 });
