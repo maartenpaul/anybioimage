@@ -140,5 +140,92 @@ def _perf(mo):
     return
 
 
+@app.cell
+def _annotations(mo):
+    from anybioimage import BioImageViewer
+    import numpy as np
+
+    v = BioImageViewer()
+    v.set_image(np.random.randint(0, 255, (5, 1, 1, 512, 512), dtype=np.uint8))
+
+    mo.md("""
+    ## 7 — Annotations (Phase 2)
+
+    Draw rectangles, polygons, and points interactively. The DataFrame views
+    update live. Select the tool in the toolbar, then draw on the canvas:
+
+    - **Rectangle** — drag.
+    - **Polygon** — click vertices, double-click to close (or press Enter).
+    - **Point** — click to place.
+    """)
+    return (v,)
+
+
+@app.cell
+def _annotations_tables(v, mo):
+    mo.md("**Live DataFrame views (reactive):**")
+    mo.ui.anywidget(v)
+    return
+
+
+@app.cell
+def _annotations_rois_df(v, mo):
+    mo.md("### Rectangles (`rois_df`)")
+    mo.ui.table(v.rois_df)
+    return
+
+
+@app.cell
+def _annotations_polygons_df(v, mo):
+    mo.md("### Polygons (`polygons_df`)")
+    mo.ui.table(v.polygons_df)
+    return
+
+
+@app.cell
+def _annotations_points_df(v, mo):
+    mo.md("### Points (`points_df`)")
+    mo.ui.table(v.points_df)
+    return
+
+
+@app.cell
+def _sam_section(mo):
+    try:
+        import ultralytics as _ultralytics  # noqa: F401
+        _sam_available = True
+    except Exception:
+        _sam_available = False
+
+    if _sam_available:
+        from anybioimage import BioImageViewer as _BioImageViewerSam
+        import numpy as _np_sam
+
+        _v_sam = _BioImageViewerSam()
+        # Small synthetic example — replace with a real cell image in practice.
+        _data_sam = _np_sam.random.randint(0, 255, (1, 1, 1, 256, 256), dtype=_np_sam.uint8)
+        _v_sam.set_image(_data_sam)
+        _v_sam.enable_sam("mobile_sam")
+
+        _ = mo.vstack([
+            mo.md("""
+    ## 8 — SAM walkthrough
+
+    The Layers panel has a "Use SAM on next rect / point" checkbox. When
+    enabled, drawing a rectangle (or placing a point) runs SAM and adds the
+    resulting mask to the Masks section — no extra code required.
+    """),
+            mo.ui.anywidget(_v_sam),
+        ])
+    else:
+        _ = mo.md("""
+    ## 8 — SAM (optional)
+
+    Install with `pip install anybioimage[sam]` to enable this section.
+    """)
+    _
+    return
+
+
 if __name__ == "__main__":
     app.run()
