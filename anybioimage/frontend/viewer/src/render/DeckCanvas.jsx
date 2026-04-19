@@ -1,4 +1,3 @@
-// anybioimage/frontend/viewer/src/render/DeckCanvas.jsx
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import DeckGL from '@deck.gl/react';
 import { OrthographicView } from '@deck.gl/core';
@@ -36,8 +35,10 @@ export function DeckCanvas({ model, onHover, deckRef, sourcesRef, selectionsRef 
   const channelSettings = useModelTrait(model, '_channel_settings');
   const currentT = useModelTrait(model, 'current_t');
   const currentZ = useModelTrait(model, 'current_z');
-  const displayMode = useModelTrait(model, '_display_mode') || 'composite';
+  const displayMode = useModelTrait(model, '_display_mode');
   const activeChannel = useModelTrait(model, 'current_c') || 0;
+  const imageShape = useModelTrait(model, '_image_shape');
+  const imageDtype = useModelTrait(model, '_image_dtype');
   const pixelSizeUm = useModelTrait(model, 'pixel_size_um');
   const scaleBarVisible = useModelTrait(model, 'scale_bar_visible') !== false;
   const imageVisible = useModelTrait(model, 'image_visible') !== false;
@@ -56,12 +57,9 @@ export function DeckCanvas({ model, onHover, deckRef, sourcesRef, selectionsRef 
     async function run() {
       setError(null);
       if (pixelSourceMode === 'chunk_bridge') {
-        const shapeArr = model.get('_image_shape') || null;
-        const dtype = model.get('_image_dtype') || 'Uint16';
-        if (!shapeArr || shapeArr.length !== 5) { setSources(null); return; }
-        const [t, c, z, y, x] = shapeArr;
+        if (!imageShape || imageShape.length !== 5) { setSources(null); return; }
         activeAnywidgetSource = new AnywidgetPixelSource(model, {
-          shape: { t, c, z, y, x }, dtype, tileSize: 512,
+          shape: imageShape, dtype: imageDtype || 'Uint16', tileSize: 512,
         });
         setSources([activeAnywidgetSource]);
       } else if (zarrSource?.url) {
@@ -80,7 +78,7 @@ export function DeckCanvas({ model, onHover, deckRef, sourcesRef, selectionsRef 
       cancelled = true;
       if (activeAnywidgetSource) activeAnywidgetSource.destroy();
     };
-  }, [pixelSourceMode, zarrSource?.url]);
+  }, [pixelSourceMode, zarrSource?.url, imageShape, imageDtype]);
 
   // Reset view on new source.
   useEffect(() => {

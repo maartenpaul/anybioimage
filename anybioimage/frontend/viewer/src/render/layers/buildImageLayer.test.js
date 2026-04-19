@@ -1,11 +1,11 @@
 import { describe, it, expect, vi } from 'vitest';
 import { buildImageLayerProps } from './buildImageLayer.js';
 
-// Mock AdditiveColormapExtension from @hms-dbmi/viv
 vi.mock('@hms-dbmi/viv', () => ({
   AdditiveColormapExtension: class AdditiveColormapExtension {
     constructor() { this.name = 'AdditiveColormapExtension'; }
   },
+  MAX_CHANNELS: 6,
 }));
 
 describe('buildImageLayerProps', () => {
@@ -38,7 +38,7 @@ describe('buildImageLayerProps', () => {
     expect(props.selections).toEqual([{ t: 0, c: 2, z: 0 }]);
   });
 
-  it('clamps to 6 channels and sets exceeded flag', () => {
+  it('clamps visible channels to Viv\'s MAX_CHANNELS (6)', () => {
     const many = Array.from({ length: 8 }, (_, i) => ({
       index: i, visible: true, color_kind: 'solid', color: '#ffffff',
       data_min: 0, data_max: 255, min: 0, max: 1,
@@ -47,7 +47,6 @@ describe('buildImageLayerProps', () => {
       sources, channels: many, currentT: 0, currentZ: 0, displayMode: 'composite',
     });
     expect(props.selections.length).toBe(6);
-    expect(props.exceeded).toBe(true);
   });
 
   it('uses AdditiveColormapExtension when a visible channel has LUT mode', () => {

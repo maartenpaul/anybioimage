@@ -26,19 +26,18 @@ export class AnywidgetPixelSource {
     this._level = level;
     this._tileSize = tileSize;
     this._dtype = dtype;
-    // Accept shape as either array [t,c,z,y,x] or object {t,c,z,y,x}
-    this._shape = Array.isArray(shape)
-      ? { t: shape[0], c: shape[1], z: shape[2], y: shape[3], x: shape[4] }
-      : shape;
+    this._shape = shape;
     this._labels = labels || ['t', 'c', 'z', 'y', 'x'];
     this._pending = new Map();
 
-    // rAF batching for coalescing rapid tile requests
+    // Deck.gl calls getTile once per visible tile per frame — often dozens at
+    // once on fit-to-screen. setTimeout(0) coalesces them into one microtask
+    // burst so Python can dedupe cache hits in a tight loop. We use setTimeout
+    // instead of requestAnimationFrame so background-tab throttling doesn't
+    // stall pending requests indefinitely.
     this._pendingBatch = [];
-    this._rafId = null;
+    this._flushTimer = null;
 
-    // Register a single listener; multiplex by requestId.
-    // anywidget exposes custom messages on 'msg:custom'.
     this._listener = (content, buffers) => {
       if (!content || content.kind !== 'chunk') return;
       const entry = this._pending.get(content.requestId);
@@ -48,7 +47,7 @@ export class AnywidgetPixelSource {
         entry.reject(new Error(content.error || 'chunk fetch failed'));
         return;
       }
-      const Ctor = VIV_TO_ARRAY[dtype] || Uint8Array;
+      const Ctor = VIV_TO_ARRAY[this._dtype] || Uint8Array;
       const view = buffers && buffers[0]
         ? new Ctor(buffers[0])
         : new Ctor(0);
@@ -63,36 +62,22 @@ export class AnywidgetPixelSource {
       entry.reject(new Error('pixel source destroyed'));
     }
     this._pending.clear();
-    if (this._rafId !== null) {
-      cancelAnimationFrame(this._rafId);
-      this._rafId = null;
+    if (this._flushTimer !== null) {
+      clearTimeout(this._flushTimer);
+      this._flushTimer = null;
     }
     this._pendingBatch = [];
   }
 
-  get shape() {
-    return [this._shape.t, this._shape.c, this._shape.z, this._shape.y, this._shape.x];
-  }
+  get shape() { return this._shape; }
   get labels() { return this._labels; }
   get tileSize() { return this._tileSize; }
   get dtype() { return this._dtype; }
 
   _flush() {
-    this._rafId = null;
+    this._flushTimer = null;
     const batch = this._pendingBatch.splice(0);
-    for (const item of batch) {
-      this._model.send({
-        kind: 'chunk',
-        requestId: item.requestId,
-        t: item.t,
-        c: item.c,
-        z: item.z,
-        level: item.level,
-        tx: item.tx,
-        ty: item.ty,
-        tileSize: item.tileSize,
-      });
-    }
+    for (const msg of batch) this._model.send(msg);
   }
 
   async getTile({ x, y, selection, signal }) {
@@ -111,6 +96,7 @@ export class AnywidgetPixelSource {
         reject: (err) => { if (signal) signal.removeEventListener('abort', onAbort); reject(err); },
       });
       this._pendingBatch.push({
+        kind: 'chunk',
         requestId,
         t: selection.t | 0,
         c: selection.c | 0,
@@ -120,8 +106,8 @@ export class AnywidgetPixelSource {
         ty: y | 0,
         tileSize: this._tileSize,
       });
-      if (this._rafId === null) {
-        this._rafId = requestAnimationFrame(() => this._flush());
+      if (this._flushTimer === null) {
+        this._flushTimer = setTimeout(() => this._flush(), 0);
       }
     });
   }
@@ -132,9 +118,8 @@ export class AnywidgetPixelSource {
   }
 
   async getRaster({ selection, signal }) {
-    // Simple: reconstitute from tiles. Called rarely (histogram / auto).
-    const w = this._shape.x;
-    const h = this._shape.y;
+    const [, , , yLen, xLen] = this._shape;
+    const w = xLen; const h = yLen;
     const Ctor = VIV_TO_ARRAY[this._dtype] || Uint8Array;
     const out = new Ctor(w * h);
     const tile = this._tileSize;

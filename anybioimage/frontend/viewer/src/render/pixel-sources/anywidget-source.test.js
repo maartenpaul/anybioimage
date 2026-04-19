@@ -1,9 +1,5 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { AnywidgetPixelSource } from './anywidget-source.js';
-
-// Mock requestAnimationFrame for tests (jsdom may not have it)
-globalThis.requestAnimationFrame = (cb) => { cb(); return 1; };
-globalThis.cancelAnimationFrame = () => {};
 
 function mockModel(onSend) {
   const listeners = {};
@@ -15,6 +11,8 @@ function mockModel(onSend) {
   };
 }
 
+const SHAPE = [1, 1, 1, 2, 2];
+
 describe('AnywidgetPixelSource', () => {
   it('resolves getTile with Viv-shaped output', async () => {
     const raw = new Uint16Array([1, 2, 3, 4]).buffer;
@@ -23,11 +21,7 @@ describe('AnywidgetPixelSource', () => {
         { kind: 'chunk', requestId: msg.requestId, ok: true, w: 2, h: 2, dtype: 'uint16' },
         [raw]));
     });
-    const src = new AnywidgetPixelSource(model, {
-      shape: { t: 1, c: 1, z: 1, y: 2, x: 2 },
-      dtype: 'Uint16',
-      tileSize: 512,
-    });
+    const src = new AnywidgetPixelSource(model, { shape: SHAPE, dtype: 'Uint16', tileSize: 512 });
     const out = await src.getTile({
       x: 0, y: 0, selection: { t: 0, c: 0, z: 0 }, signal: new AbortController().signal,
     });
@@ -38,12 +32,8 @@ describe('AnywidgetPixelSource', () => {
   });
 
   it('rejects getTile on abort', async () => {
-    const model = mockModel(() => {}); // never replies
-    const src = new AnywidgetPixelSource(model, {
-      shape: { t: 1, c: 1, z: 1, y: 2, x: 2 },
-      dtype: 'Uint16',
-      tileSize: 512,
-    });
+    const model = mockModel(() => {});
+    const src = new AnywidgetPixelSource(model, { shape: SHAPE, dtype: 'Uint16', tileSize: 512 });
     const ac = new AbortController();
     const p = src.getTile({ x: 0, y: 0, selection: { t: 0, c: 0, z: 0 }, signal: ac.signal });
     ac.abort();
@@ -55,30 +45,24 @@ describe('AnywidgetPixelSource', () => {
       queueMicrotask(() => model.emit('msg:custom',
         { kind: 'chunk', requestId: msg.requestId, ok: false, error: 'out of bounds' }, []));
     });
-    const src = new AnywidgetPixelSource(model, {
-      shape: { t: 1, c: 1, z: 1, y: 2, x: 2 },
-      dtype: 'Uint16',
-      tileSize: 512,
-    });
+    const src = new AnywidgetPixelSource(model, { shape: SHAPE, dtype: 'Uint16', tileSize: 512 });
     await expect(src.getTile({
       x: 9, y: 9, selection: { t: 0, c: 0, z: 0 }, signal: new AbortController().signal,
     })).rejects.toThrow(/out of bounds/);
   });
 
-  it('accepts shape as array [t,c,z,y,x] and exposes it as array via .shape', () => {
-    const model = mockModel(() => {});
-    const src = new AnywidgetPixelSource(model, {
-      shape: [2, 3, 4, 512, 512],
-      dtype: 'Uint16',
-      tileSize: 512,
-    });
+  it('exposes shape as array', () => {
+    const src = new AnywidgetPixelSource(
+      mockModel(() => {}),
+      { shape: [2, 3, 4, 512, 512], dtype: 'Uint16', tileSize: 512 },
+    );
     expect(src.shape).toEqual([2, 3, 4, 512, 512]);
   });
 
   it('swallows abort errors in onTileError, rethrows others', () => {
     const src = new AnywidgetPixelSource(
-      { send: () => {}, on: () => {}, off: () => {} },
-      { shape: { t: 1, c: 1, z: 1, y: 1, x: 1 }, dtype: 'Uint16', tileSize: 512 },
+      mockModel(() => {}),
+      { shape: SHAPE, dtype: 'Uint16', tileSize: 512 },
     );
     expect(() => src.onTileError(new Error('aborted'))).not.toThrow();
     expect(() => src.onTileError(new Error('network down'))).toThrow(/network down/);

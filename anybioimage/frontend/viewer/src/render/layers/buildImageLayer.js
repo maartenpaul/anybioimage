@@ -1,6 +1,8 @@
-import { AdditiveColormapExtension } from '@hms-dbmi/viv';
+import { AdditiveColormapExtension, MAX_CHANNELS } from '@hms-dbmi/viv';
 
-const MAX_CHANNELS = 6;
+// Stateless; one shared instance avoids tearing down deck.gl's GPU pipeline
+// on every channel-setting change.
+const ADDITIVE_COLORMAP_EXT = new AdditiveColormapExtension();
 
 function hexToRgb(hex) {
   const clean = (hex || '#ffffff').replace('#', '');
@@ -31,7 +33,6 @@ export function buildImageLayerProps({
   }
 
   const clipped = active.slice(0, MAX_CHANNELS);
-  const exceeded = active.length > MAX_CHANNELS;
 
   const selections = clipped.map((ch) => ({ t: currentT, c: ch.index, z: currentZ }));
   const colors = clipped.map((ch) => hexToRgb(ch.color));
@@ -39,7 +40,7 @@ export function buildImageLayerProps({
   const channelsVisible = clipped.map(() => true);
 
   const lutChannel = clipped.find((ch) => ch.color_kind === 'lut');
-  const extensions = lutChannel ? [new AdditiveColormapExtension()] : undefined;
+  const extensions = lutChannel ? [ADDITIVE_COLORMAP_EXT] : undefined;
   const colormap = lutChannel ? (lutChannel.lut || 'viridis') : undefined;
 
   return {
@@ -50,6 +51,5 @@ export function buildImageLayerProps({
     channelsVisible,
     extensions,
     colormap,
-    exceeded,
   };
 }
