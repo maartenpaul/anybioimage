@@ -1,11 +1,17 @@
 // anybioimage/frontend/viewer/src/chrome/LayersPanel/LayersPanel.jsx
-// Full implementation in Task 13. Phase-1 stub so App compiles.
 import React from 'react';
+import { MetadataSection } from './MetadataSection.jsx';
+import { ImageSection } from './ImageSection.jsx';
+import { ExportFooter } from './ExportFooter.jsx';
 
 export function LayersPanel({ model }) {
   return (
-    <div className="layers-panel open" style={{ width: 240, padding: 8, background: '#fafafa' }}>
-      <div style={{ fontSize: 12, color: '#666' }}>Layers panel — arriving in Task 13</div>
+    <div className="layers-panel open" style={{ width: 280, padding: 8, background: '#fafafa', overflowY: 'auto' }}>
+      <MetadataSection model={model} />
+      <ImageSection model={model} />
+      <div className="layer-item section-placeholder" style={{ color: '#999', fontStyle: 'italic', padding: '8px 4px' }}>Masks (Phase 2)</div>
+      <div className="layer-item section-placeholder" style={{ color: '#999', fontStyle: 'italic', padding: '8px 4px' }}>Annotations (Phase 2)</div>
+      <ExportFooter model={model} />
     </div>
   );
 }
