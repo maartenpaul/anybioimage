@@ -1,4 +1,5 @@
 import { AdditiveColormapExtension, MAX_CHANNELS } from '@hms-dbmi/viv';
+import { trace } from '../../util/perf.js';
 
 // Stateless; one shared instance avoids tearing down deck.gl's GPU pipeline
 // on every channel-setting change.
@@ -17,7 +18,11 @@ function contrastFor(channel) {
   return [dmin + (channel.min ?? 0) * span, dmin + (channel.max ?? 1) * span];
 }
 
-export function buildImageLayerProps({
+export function buildImageLayerProps(args) {
+  return trace('buildImageLayerProps', () => _build(args));
+}
+
+function _build({
   sources, channels, currentT, currentZ,
   displayMode = 'composite', activeChannel = 0,
 }) {
