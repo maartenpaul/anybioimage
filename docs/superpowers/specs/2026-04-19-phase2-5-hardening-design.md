@@ -315,7 +315,7 @@ A small `1` button next to the gamma `NumericInput`. Click → `setChannel(idx, 
 
 - Hidden (not disabled) when `dim_t <= 1`. No reason to see it at all.
 - Disabled with tooltip "scrub performance not yet verified — run `pytest tests/integration/test_t_scrub_perf.py`" when `scrub_perf_verified === false`.
-- The `scrub_perf_verified` traitlet defaults to `false`. CI sets it `true` by running the perf test first (part of the integration-test run). Shipped wheels carry whatever value the last local edit had — users who install the wheel get `false` by default until they run the perf test themselves (which is fast).
+- The `scrub_perf_verified` traitlet defaults to `false` at the class level. Shipped wheels always start with `false`. Users who want the play button active run `uv run pytest tests/integration/test_t_scrub_perf.py` once per environment; the test fixture sets the trait `true` for the duration of its own test but does not persist to disk. A local convenience helper `BioImageViewer.verify_scrub_perf()` runs the same check and sets the trait on the calling instance. The intent: do not enable a feature we cannot prove works on the current machine.
 
 This is the mechanical instantiation of "don't show a feature we can't prove works."
 
