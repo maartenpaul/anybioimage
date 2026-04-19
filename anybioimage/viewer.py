@@ -206,6 +206,15 @@ class BioImageViewer(
             self.handle_chunk_request(content)
         elif kind == "mask_request":
             self.handle_mask_request(content)
+        elif kind == "mask_update":
+            mid = content.get("id")
+            if mid:
+                kw = {k: v for k, v in content.items() if k not in ("kind", "id")}
+                self.update_mask_settings(mid, **kw)
+        elif kind == "mask_delete":
+            mid = content.get("id")
+            if mid:
+                self.remove_mask(mid)
 
     def close(self):
         """Clean up resources when the widget is closed."""
