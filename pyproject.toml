@@ -112,6 +112,11 @@ dev = [
     "pytest-playwright>=0.5",
 ]
 
+[tool.pytest.ini_options]
+markers = [
+    "playwright: marks tests as Playwright browser tests (requires marimo server + browser)",
+]
+
 [tool.ruff]
 line-length = 100
 target-version = "py310"

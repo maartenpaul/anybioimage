@@ -14,7 +14,7 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCREENSHOT_DIR = Path("/tmp/anybioimage-screenshots")
-NOTEBOOK = REPO_ROOT / "examples" / "image_notebook.py"
+NOTEBOOK = REPO_ROOT / "examples" / "full_demo.py"
 
 
 def _free_port():
@@ -77,6 +77,12 @@ def marimo_server():
             proc.wait(timeout=5)
         except subprocess.TimeoutExpired:
             proc.kill()
+
+
+@pytest.fixture
+def marimo_url(marimo_server):
+    """Alias for marimo_server URL, used by Phase-1 test files."""
+    return marimo_server
 
 
 @pytest.fixture
