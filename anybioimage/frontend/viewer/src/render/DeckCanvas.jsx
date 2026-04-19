@@ -11,6 +11,7 @@ import { buildScaleBarLayer } from './layers/buildScaleBar.js';
 import { annotationsToLayers } from './layers/annotationsToLayers.js';
 import { buildMaskLayers } from './layers/buildMaskLayers.js';
 import { useModelTrait } from '../model/useModelTrait.js';
+import { trace } from '../util/perf.js';
 
 function useContainerSize(ref, fallback = { width: 800, height: 600 }) {
   const [size, setSize] = useState(fallback);
@@ -156,7 +157,7 @@ export function DeckCanvas({ model, onHover, controller, maskBridge, deckRef, so
     () => (controller ? controller.getPreviewLayer() : null),
     [controller, previewTick, toolMode]);
 
-  const layers = useMemo(() => {
+  const layers = useMemo(() => trace('layers:build', () => {
     const out = [];
     if (imageLayerProps && imageVisible) {
       out.push(new MultiscaleImageLayer({ id: 'viv-image', viewportId: 'ortho', ...imageLayerProps }));
@@ -168,7 +169,7 @@ export function DeckCanvas({ model, onHover, controller, maskBridge, deckRef, so
       out.push(buildScaleBarLayer({ pixelSizeUm, viewState, width, height }));
     }
     return out;
-  }, [imageLayerProps, imageVisible, maskLayers, annotationLayers, previewLayer,
+  }), [imageLayerProps, imageVisible, maskLayers, annotationLayers, previewLayer,
       pixelSizeUm, scaleBarVisible, viewState, width, height]);
 
   function imagePixelFor(info) {

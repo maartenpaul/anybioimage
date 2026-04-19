@@ -9,6 +9,7 @@
  * Dtype strings from Python (numpy) are one of: "uint8", "uint16", "uint32", "float32".
  * Viv expects "Uint8" | "Uint16" | "Uint32" | "Float32" in its PixelSource `dtype`.
  */
+import { trace } from '../../util/perf.js';
 
 const DTYPE_TO_VIV = {
   uint8: 'Uint8', uint16: 'Uint16', uint32: 'Uint32', float32: 'Float32',
@@ -97,7 +98,13 @@ export class AnywidgetPixelSource {
     for (const msg of batch) this._model.send(msg);
   }
 
-  async getTile({ x, y, selection, signal }) {
+  async getTile(args) {
+    // trace() wraps the whole promise including the wait for Python's reply.
+    // Label used by integration perf tests [spec §3].
+    return trace('pixelSource:getTile', () => this._getTile(args));
+  }
+
+  async _getTile({ x, y, selection, signal }) {
     const requestId = _nextRequestId++;
     return new Promise((resolve, reject) => {
       const onAbort = () => {
