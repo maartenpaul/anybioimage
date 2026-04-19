@@ -7,6 +7,7 @@ import { openOmeZarr } from './pixel-sources/zarr-source.js';
 import { AnywidgetPixelSource } from './pixel-sources/anywidget-source.js';
 import { buildImageLayerProps } from './layers/buildImageLayer.js';
 import { buildScaleBarLayer } from './layers/buildScaleBar.js';
+import { annotationsToLayers } from './layers/annotationsToLayers.js';
 import { useModelTrait } from '../model/useModelTrait.js';
 
 function useContainerSize(ref, fallback = { width: 800, height: 600 }) {
@@ -42,6 +43,8 @@ export function DeckCanvas({ model, onHover, deckRef, sourcesRef, selectionsRef 
   const pixelSizeUm = useModelTrait(model, 'pixel_size_um');
   const scaleBarVisible = useModelTrait(model, 'scale_bar_visible') !== false;
   const imageVisible = useModelTrait(model, 'image_visible') !== false;
+  const annotations = useModelTrait(model, '_annotations') || [];
+  const selectedId = useModelTrait(model, 'selected_annotation_id') || '';
 
   const containerRef = useRef(null);
   const { width, height } = useContainerSize(containerRef);
@@ -115,15 +118,26 @@ export function DeckCanvas({ model, onHover, deckRef, sourcesRef, selectionsRef 
     return () => model.off('msg:custom', handler);
   }, [model, sources, width, height]);
 
+  const annotationLayers = useMemo(
+    () => annotationsToLayers({
+      annotations, currentT: currentT || 0, currentZ: currentZ || 0, selectedId,
+    }),
+    [annotations, currentT, currentZ, selectedId]);
+
   const layers = useMemo(() => {
-    if (!imageLayerProps || !imageVisible) return [];
-    const imageLayer = new MultiscaleImageLayer({ id: 'viv-image', viewportId: 'ortho', ...imageLayerProps });
-    const out = [imageLayer];
+    const out = [];
+    if (imageLayerProps && imageVisible) {
+      out.push(new MultiscaleImageLayer({
+        id: 'viv-image', viewportId: 'ortho', ...imageLayerProps,
+      }));
+    }
+    for (const l of annotationLayers) out.push(l);
     if (scaleBarVisible && pixelSizeUm) {
       out.push(buildScaleBarLayer({ pixelSizeUm, viewState, width, height }));
     }
     return out;
-  }, [imageLayerProps, imageVisible, pixelSizeUm, scaleBarVisible, viewState, width, height]);
+  }, [imageLayerProps, imageVisible, annotationLayers,
+      pixelSizeUm, scaleBarVisible, viewState, width, height]);
 
   if (error) {
     return <div style={{ color: '#b00', padding: 12 }}>Failed to load image: {error}</div>;
