@@ -1,5 +1,12 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { buildImageLayerProps } from './buildImageLayer.js';
+
+// Mock AdditiveColormapExtension from @hms-dbmi/viv
+vi.mock('@hms-dbmi/viv', () => ({
+  AdditiveColormapExtension: class AdditiveColormapExtension {
+    constructor() { this.name = 'AdditiveColormapExtension'; }
+  },
+}));
 
 describe('buildImageLayerProps', () => {
   const sources = [{ shape: [1, 3, 1, 2048, 2048], labels: ['t','c','z','y','x'] }];
@@ -41,5 +48,28 @@ describe('buildImageLayerProps', () => {
     });
     expect(props.selections.length).toBe(6);
     expect(props.exceeded).toBe(true);
+  });
+
+  it('uses AdditiveColormapExtension when a visible channel has LUT mode', () => {
+    const ch = [{ index: 0, visible: true, color_kind: 'lut', lut: 'magma',
+                  data_min: 0, data_max: 255, min: 0, max: 1 }];
+    const props = buildImageLayerProps({
+      sources, channels: ch, currentT: 0, currentZ: 0, displayMode: 'composite',
+    });
+    expect(props.colormap).toBe('magma');
+    expect(props.extensions).toBeTruthy();
+    expect(props.extensions.length).toBe(1);
+  });
+
+  it('omits extensions when only solid-colour channels', () => {
+    const solidChannels = [
+      { index: 0, visible: true, color_kind: 'solid', color: '#ff0000',
+        data_min: 0, data_max: 255, min: 0, max: 1 },
+    ];
+    const props = buildImageLayerProps({
+      sources, channels: solidChannels, currentT: 0, currentZ: 0, displayMode: 'composite',
+    });
+    expect(props.extensions).toBeUndefined();
+    expect(props.colormap).toBeUndefined();
   });
 });

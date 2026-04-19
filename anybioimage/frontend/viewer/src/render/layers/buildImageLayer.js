@@ -1,3 +1,5 @@
+import { AdditiveColormapExtension } from '@hms-dbmi/viv';
+
 const MAX_CHANNELS = 6;
 
 function hexToRgb(hex) {
@@ -35,7 +37,10 @@ export function buildImageLayerProps({
   const colors = clipped.map((ch) => hexToRgb(ch.color));
   const contrastLimits = clipped.map(contrastFor);
   const channelsVisible = clipped.map(() => true);
-  const useLut = clipped.map((ch) => ch.color_kind === 'lut' ? (ch.lut || 'viridis') : null);
+
+  const lutChannel = clipped.find((ch) => ch.color_kind === 'lut');
+  const extensions = lutChannel ? [new AdditiveColormapExtension()] : undefined;
+  const colormap = lutChannel ? (lutChannel.lut || 'viridis') : undefined;
 
   return {
     loader: sources,
@@ -43,7 +48,8 @@ export function buildImageLayerProps({
     colors,
     contrastLimits,
     channelsVisible,
-    useLut,           // consumed by VivLutExtension in Task 9
+    extensions,
+    colormap,
     exceeded,
   };
 }
