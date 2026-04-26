@@ -42,7 +42,8 @@ def _channel_settings_from_omero(ome: dict, dim_c: int, dtype: Any = None) -> li
     dtype_max: float | None = None
     if dtype is not None and np.issubdtype(np.dtype(dtype), np.integer):
         info = np.iinfo(np.dtype(dtype))
-        dtype_min = float(info.min); dtype_max = float(info.max)
+        dtype_min = float(info.min)
+        dtype_max = float(info.max)
     omero = ome.get("omero") or {}
     omero_channels = omero.get("channels") or []
     default_palette = ["#ff0000", "#00ff00", "#0000ff", "#ff00ff", "#00ffff", "#ffff00"]
@@ -219,8 +220,11 @@ class ImageLoadingMixin:
         t, c, z, y, x = tczyx.shape
         self._image_shape = [int(t), int(c), int(z), int(y), int(x)]
         self._image_dtype = _DTYPE_TO_JS.get(str(tczyx.dtype), "Uint16")
-        self.dim_t = t; self.dim_c = c; self.dim_z = z
-        self.width = x; self.height = y
+        self.dim_t = t
+        self.dim_c = c
+        self.dim_z = z
+        self.width = x
+        self.height = y
         self._channel_settings = _channel_settings_from_omero({}, dim_c=c, dtype=tczyx.dtype)
         self.pixel_size_um = None
         self._pixel_source_mode = "chunk_bridge"
@@ -257,8 +261,12 @@ class ImageLoadingMixin:
 
 
 def _to_tczyx(arr: np.ndarray) -> np.ndarray:
-    if arr.ndim == 5: return arr
-    if arr.ndim == 4: return arr[None, ...]
-    if arr.ndim == 3: return arr[None, :, None, :, :]
-    if arr.ndim == 2: return arr[None, None, None, :, :]
+    if arr.ndim == 5:
+        return arr
+    if arr.ndim == 4:
+        return arr[None, ...]
+    if arr.ndim == 3:
+        return arr[None, :, None, :, :]
+    if arr.ndim == 2:
+        return arr[None, None, None, :, :]
     raise ValueError(f"unsupported ndim: {arr.ndim}")

@@ -18,8 +18,10 @@ def _now_iso() -> str:
 
 
 def _rect_entry(rec: dict[str, Any]) -> dict[str, Any]:
-    x = float(rec["x"]); y = float(rec["y"])
-    w = float(rec["width"]); h = float(rec["height"])
+    x = float(rec["x"])
+    y = float(rec["y"])
+    w = float(rec["width"])
+    h = float(rec["height"])
     return {
         "id": str(rec["id"]),
         "kind": "rect",

@@ -11,8 +11,6 @@ from anybioimage.mixins.image_loading import _looks_like_zarr_url
     "http://localhost:8000/plate.zarr",
     "file:///data/my.ome.zarr",
     "s3://bucket/key/my.ome.zarr",
-    "/tmp/my.ome.zarr",
-    "./examples/image.zarr",
     "https://example.com/MY.OME.ZARR",  # case-insensitive
     "https://example.com/my.zarr?versionId=abc123",  # query-string stripped
 ])
@@ -27,6 +25,10 @@ def test_url_shapes_detected_as_zarr(source):
     "/tmp/image.png",
     "file:///data/movie.mp4",
     "/tmp/foo.zarr.bak",  # superstring suffix — must reject
+    # Filesystem paths ending in .zarr are NOT URLs zarrita.js can fetch
+    # from the browser; they're routed through the bioio path instead.
+    "/tmp/my.ome.zarr",
+    "./examples/image.zarr",
 ])
 def test_non_zarr_shapes_rejected(source):
     assert _looks_like_zarr_url(source) is False

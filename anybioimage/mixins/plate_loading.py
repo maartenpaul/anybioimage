@@ -1,6 +1,7 @@
 """HCS OME-Zarr plate loading mixin for BioImageViewer."""
 
 import logging
+
 import zarr
 
 logger = logging.getLogger(__name__)

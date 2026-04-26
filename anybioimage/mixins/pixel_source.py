@@ -78,9 +78,12 @@ class PixelSourceMixin:
         """Dispatch a `{kind:"chunk",...}` message from JS."""
         request_id = int(payload.get("requestId", -1))
         try:
-            t = int(payload["t"]); c = int(payload["c"]); z = int(payload["z"])
+            t = int(payload["t"])
+            c = int(payload["c"])
+            z = int(payload["z"])
             level = int(payload.get("level", 0))
-            tx = int(payload["tx"]); ty = int(payload["ty"])
+            tx = int(payload["tx"])
+            ty = int(payload["ty"])
             tile = int(payload.get("tileSize", 512))
         except (KeyError, TypeError, ValueError) as exc:
             self._send_chunk_response(

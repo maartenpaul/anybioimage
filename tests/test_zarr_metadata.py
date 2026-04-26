@@ -23,6 +23,12 @@ def zarr_viewer():
     return viewer
 
 
+@pytest.mark.xfail(
+    reason="Local filesystem paths are NOT routed through _set_zarr_url (zarrita.js "
+    "can't fetch them from the browser). They go through the bioio chunk-bridge path "
+    "instead. Test premise is obsolete; delete in Phase 2.",
+    strict=False,
+)
 def test_zarr_source_set_to_url(zarr_viewer):
     assert zarr_viewer._zarr_source.get("url") == str(EXAMPLE_ZARR)
 
