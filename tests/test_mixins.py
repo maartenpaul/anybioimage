@@ -29,6 +29,7 @@ class TestImageLoadingNumpyShapes:
         assert viewer.width == 128
         assert viewer.height == 64
 
+    @pytest.mark.xfail(reason="Removed with Canvas2D compositor in 2026-04-19 unified viewer; new pipeline keeps all dims — delete in Phase 2")
     def test_4d_squeezes_to_2d(self):
         """4D array with singleton dims squeezes to 2D."""
         viewer = BioImageViewer()
@@ -45,6 +46,7 @@ class TestImageLoadingNumpyShapes:
         assert viewer.width == 64
         assert viewer.height == 32
 
+    @pytest.mark.xfail(reason="Removed with Canvas2D compositor in 2026-04-19 unified viewer; image_data stays '' — delete in Phase 2")
     def test_uint16_normalization(self):
         """uint16 data gets normalized to uint8 for display."""
         viewer = BioImageViewer()
@@ -52,6 +54,7 @@ class TestImageLoadingNumpyShapes:
         viewer.set_image(arr)
         assert len(viewer.image_data) > 0  # base64 PNG generated
 
+    @pytest.mark.xfail(reason="Removed with Canvas2D compositor in 2026-04-19 unified viewer; image_data stays '' — delete in Phase 2")
     def test_float32_normalization(self):
         """float32 data gets normalized."""
         viewer = BioImageViewer()
@@ -59,6 +62,7 @@ class TestImageLoadingNumpyShapes:
         viewer.set_image(arr)
         assert len(viewer.image_data) > 0
 
+    @pytest.mark.xfail(reason="Removed with Canvas2D compositor in 2026-04-19 unified viewer; _raw_numpy_array removed — delete in Phase 2")
     def test_set_image_stores_raw_array(self):
         """Raw array stored for re-rendering on LUT changes."""
         viewer = BioImageViewer()
@@ -67,6 +71,7 @@ class TestImageLoadingNumpyShapes:
         assert viewer._raw_numpy_array is not None
         np.testing.assert_array_equal(viewer._raw_numpy_array, arr)
 
+    @pytest.mark.xfail(reason="Removed with Canvas2D compositor in 2026-04-19 unified viewer; image_data stays '' — delete in Phase 2")
     def test_set_image_replaces_previous(self):
         viewer = BioImageViewer()
         viewer.set_image(np.zeros((32, 32), dtype=np.uint8))
@@ -76,6 +81,7 @@ class TestImageLoadingNumpyShapes:
         assert viewer.height == 64
         assert viewer.image_data != old_data
 
+    @pytest.mark.xfail(reason="Removed with Canvas2D compositor in 2026-04-19 unified viewer; channel color default changed — delete in Phase 2")
     def test_channel_settings_created(self):
         """set_image creates channel settings with correct data range."""
         viewer = BioImageViewer()
@@ -88,6 +94,7 @@ class TestImageLoadingNumpyShapes:
         assert settings[0]["color"] == "#ffffff"
         assert settings[0]["visible"] is True
 
+    @pytest.mark.xfail(reason="Removed with Canvas2D compositor in 2026-04-19 unified viewer; uint8 data_min/max now from dtype range not pixel values — delete in Phase 2")
     def test_channel_settings_zero_size_image(self):
         """Edge case: constant image gets 0/0 data range without error."""
         viewer = BioImageViewer()
@@ -113,6 +120,7 @@ class TestImageLoadingNumpyShapes:
 class TestImageReRendering:
     """Test re-rendering numpy images on channel settings changes."""
 
+    @pytest.mark.xfail(reason="Removed with Canvas2D compositor in 2026-04-19 unified viewer; _update_numpy_image removed — delete in Phase 2")
     def test_update_numpy_image_with_color(self):
         """Changing channel color should re-render the image."""
         viewer = BioImageViewer()
@@ -127,6 +135,7 @@ class TestImageReRendering:
         viewer._update_numpy_image()
         assert viewer.image_data != original_data
 
+    @pytest.mark.xfail(reason="Removed with Canvas2D compositor in 2026-04-19 unified viewer; _update_numpy_image removed — delete in Phase 2")
     def test_update_numpy_image_with_contrast(self):
         """Changing contrast window should affect rendered output."""
         viewer = BioImageViewer()
@@ -140,6 +149,7 @@ class TestImageReRendering:
         viewer._update_numpy_image()
         assert viewer.image_data != original_data
 
+    @pytest.mark.xfail(reason="Removed with Canvas2D compositor in 2026-04-19 unified viewer; _update_numpy_image removed — delete in Phase 2")
     def test_update_numpy_image_no_raw_data(self):
         """_update_numpy_image should be a no-op if no raw data stored."""
         viewer = BioImageViewer()
@@ -204,21 +214,19 @@ class TestMaskManagement:
         assert mask["contours"] is True
         assert mask["contour_width"] == 2
 
-    def test_add_mask_data_is_base64_png(self):
-        """Mask data should be valid base64 encoded PNG."""
-        import base64
-        from io import BytesIO
-
-        from PIL import Image
+    def test_add_mask_bytes_stored(self):
+        """Mask RGBA bytes should be stored in _mask_bytes (not inline in _masks_data)."""
         viewer = BioImageViewer()
         viewer.set_image(np.zeros((32, 32), dtype=np.uint8))
         labels = np.zeros((32, 32), dtype=np.int32)
         labels[4:12, 4:12] = 1
         mask_id = viewer.add_mask(labels)
+        # No 'data' key in metadata entry
         mask = [m for m in viewer._masks_data if m["id"] == mask_id][0]
-        img = Image.open(BytesIO(base64.b64decode(mask["data"])))
-        assert img.size == (32, 32)
-        assert img.mode == "RGBA"
+        assert "data" not in mask
+        # Raw bytes are in _mask_bytes; 32×32×4 = 4096
+        assert mask_id in viewer._mask_bytes
+        assert len(viewer._mask_bytes[mask_id]) == 32 * 32 * 4
 
     def test_remove_mask(self):
         viewer = BioImageViewer()
@@ -230,14 +238,16 @@ class TestMaskManagement:
         assert id2 in viewer.get_mask_ids()
 
     def test_remove_mask_cleans_up_arrays(self):
-        """remove_mask should clean up internal arrays and caches."""
+        """remove_mask should clean up internal arrays, bytes, and caches."""
         viewer = BioImageViewer()
         viewer.set_image(np.zeros((32, 32), dtype=np.uint8))
         mask_id = viewer.add_mask(np.ones((32, 32), dtype=np.int32))
         assert mask_id in viewer._mask_arrays
+        assert mask_id in viewer._mask_bytes
         assert mask_id in viewer._mask_caches
         viewer.remove_mask(mask_id)
         assert mask_id not in viewer._mask_arrays
+        assert mask_id not in viewer._mask_bytes
         assert mask_id not in viewer._mask_caches
 
     def test_clear_masks(self):
@@ -248,6 +258,7 @@ class TestMaskManagement:
         viewer.clear_masks()
         assert len(viewer.get_mask_ids()) == 0
         assert len(viewer._mask_arrays) == 0
+        assert len(viewer._mask_bytes) == 0
         assert len(viewer._mask_caches) == 0
 
     def test_set_mask_replaces_existing(self):
@@ -270,17 +281,17 @@ class TestMaskManagement:
         assert mask["name"] == "Renamed"
 
     def test_update_mask_settings_contour_toggle(self):
-        """Toggling contours regenerates mask data."""
+        """Toggling contours regenerates mask bytes."""
         viewer = BioImageViewer()
         viewer.set_image(np.zeros((32, 32), dtype=np.uint8))
         labels = np.zeros((32, 32), dtype=np.int32)
         labels[8:24, 8:24] = 1
         mask_id = viewer.add_mask(labels, contours_only=False)
-        original_data = viewer._masks_data[0]["data"]
+        original_bytes = viewer._mask_bytes[mask_id]
 
         viewer.update_mask_settings(mask_id, contours=True, contour_width=2)
-        new_data = viewer._masks_data[0]["data"]
-        assert new_data != original_data  # Should have regenerated
+        new_bytes = viewer._mask_bytes[mask_id]
+        assert new_bytes != original_bytes  # Should have regenerated
 
     def test_update_mask_settings_contour_cache(self):
         """Toggling contours back and forth should use cache."""
@@ -289,16 +300,15 @@ class TestMaskManagement:
         labels = np.zeros((32, 32), dtype=np.int32)
         labels[8:24, 8:24] = 1
         mask_id = viewer.add_mask(labels, contours_only=False)
-        original_data = viewer._masks_data[0]["data"]
+        original_bytes = viewer._mask_bytes[mask_id]
 
         # Toggle to contours
         viewer.update_mask_settings(mask_id, contours=True)
-        _ = viewer._masks_data[0]["data"]  # contour version generated
 
         # Toggle back → should use cached filled version
         viewer.update_mask_settings(mask_id, contours=False)
-        restored_data = viewer._masks_data[0]["data"]
-        assert restored_data == original_data
+        restored_bytes = viewer._mask_bytes[mask_id]
+        assert restored_bytes == original_bytes
 
     def test_masks_df(self):
         """masks_df property returns correct DataFrame."""
@@ -338,41 +348,42 @@ class TestAnnotations:
 
     def test_rois_df_with_data(self):
         viewer = BioImageViewer()
-        viewer._rois_data = [
+        viewer.rois_df = pd.DataFrame([
             {"id": "r1", "x": 10, "y": 20, "width": 30, "height": 40},
             {"id": "r2", "x": 5, "y": 15, "width": 25, "height": 35},
-        ]
+        ])
         df = viewer.rois_df
         assert len(df) == 2
         assert df.iloc[0]["x"] == 10
         assert df.iloc[1]["width"] == 25
 
     def test_rois_df_setter(self):
-        """Setting rois_df should update _rois_data traitlet."""
+        """Setting rois_df should update _annotations traitlet."""
         viewer = BioImageViewer()
         df = pd.DataFrame([
             {"id": "r1", "x": 100, "y": 200, "width": 50, "height": 60},
         ])
         viewer.rois_df = df
-        assert len(viewer._rois_data) == 1
-        assert viewer._rois_data[0]["x"] == 100
+        rects = [a for a in viewer._annotations if a.get("kind") == "rect"]
+        assert len(rects) == 1
+        assert rects[0]["geometry"][0] == 100  # x0
 
     def test_rois_df_roundtrip(self):
         """Get → modify → set should preserve data."""
         viewer = BioImageViewer()
-        viewer._rois_data = [
+        viewer.rois_df = pd.DataFrame([
             {"id": "r1", "x": 10, "y": 20, "width": 30, "height": 40},
-        ]
+        ])
         df = viewer.rois_df
         df.loc[0, "x"] = 999
         viewer.rois_df = df
-        assert viewer._rois_data[0]["x"] == 999
+        assert viewer.rois_df.iloc[0]["x"] == 999
 
     def test_polygons_df_with_data(self):
         viewer = BioImageViewer()
-        viewer._polygons_data = [
+        viewer.polygons_df = pd.DataFrame([
             {"id": "p1", "points": [{"x": 0, "y": 0}, {"x": 10, "y": 0}, {"x": 10, "y": 10}]},
-        ]
+        ])
         df = viewer.polygons_df
         assert len(df) == 1
         assert df.iloc[0]["num_vertices"] == 3
@@ -384,16 +395,17 @@ class TestAnnotations:
             {"id": "p1", "points": [{"x": 0, "y": 0}, {"x": 5, "y": 5}]},
         ])
         viewer.polygons_df = df
-        assert len(viewer._polygons_data) == 1
-        assert viewer._polygons_data[0]["id"] == "p1"
-        assert len(viewer._polygons_data[0]["points"]) == 2
+        polys = [a for a in viewer._annotations if a.get("kind") == "polygon"]
+        assert len(polys) == 1
+        assert polys[0]["id"] == "p1"
+        assert len(polys[0]["geometry"]) == 2
 
     def test_points_df_with_data(self):
         viewer = BioImageViewer()
-        viewer._points_data = [
+        viewer.points_df = pd.DataFrame([
             {"id": "pt1", "x": 100, "y": 200},
             {"id": "pt2", "x": 50, "y": 150},
-        ]
+        ])
         df = viewer.points_df
         assert len(df) == 2
         assert df.iloc[0]["x"] == 100
@@ -404,37 +416,35 @@ class TestAnnotations:
             {"id": "pt1", "x": 42, "y": 84},
         ])
         viewer.points_df = df
-        assert viewer._points_data[0]["x"] == 42
+        assert viewer.points_df.iloc[0]["x"] == 42
 
     def test_clear_rois(self):
         viewer = BioImageViewer()
-        viewer._rois_data = [{"id": "r1", "x": 0, "y": 0, "width": 10, "height": 10}]
+        viewer.rois_df = pd.DataFrame([{"id": "r1", "x": 0, "y": 0, "width": 10, "height": 10}])
         viewer.clear_rois()
-        assert viewer._rois_data == []
+        assert viewer.rois_df.empty
 
     def test_clear_polygons(self):
         viewer = BioImageViewer()
-        viewer._polygons_data = [{"id": "p1", "points": []}]
+        viewer.polygons_df = pd.DataFrame([{"id": "p1", "points": [{"x": 0, "y": 0}, {"x": 1, "y": 1}]}])
         viewer.clear_polygons()
-        assert viewer._polygons_data == []
+        assert viewer.polygons_df.empty
 
     def test_clear_points(self):
         viewer = BioImageViewer()
-        viewer._points_data = [{"id": "pt1", "x": 0, "y": 0}]
+        viewer.points_df = pd.DataFrame([{"id": "pt1", "x": 0, "y": 0}])
         viewer.clear_points()
-        assert viewer._points_data == []
+        assert viewer.points_df.empty
 
     def test_clear_all_annotations(self):
         viewer = BioImageViewer()
-        viewer._rois_data = [{"id": "r1", "x": 0, "y": 0, "width": 10, "height": 10}]
-        viewer._polygons_data = [{"id": "p1", "points": []}]
-        viewer._points_data = [{"id": "pt1", "x": 0, "y": 0}]
+        viewer.rois_df = pd.DataFrame([{"id": "r1", "x": 0, "y": 0, "width": 10, "height": 10}])
+        viewer.polygons_df = pd.DataFrame([{"id": "p1", "points": [{"x": 0, "y": 0}, {"x": 1, "y": 1}]}])
+        viewer.points_df = pd.DataFrame([{"id": "pt1", "x": 0, "y": 0}])
         viewer.selected_annotation_id = "r1"
         viewer.selected_annotation_type = "roi"
         viewer.clear_all_annotations()
-        assert viewer._rois_data == []
-        assert viewer._polygons_data == []
-        assert viewer._points_data == []
+        assert viewer._annotations == []
         assert viewer.selected_annotation_id == ""
         assert viewer.selected_annotation_type == ""
 
@@ -442,6 +452,7 @@ class TestAnnotations:
 class TestAutoContrast:
     """Test auto-contrast computation for numpy images."""
 
+    @pytest.mark.xfail(reason="Removed with Canvas2D compositor in 2026-04-19 unified viewer; _on_auto_contrast_request removed — delete in Phase 2")
     def test_auto_contrast_numpy(self):
         """Auto contrast on numpy array computes percentile range."""
         viewer = BioImageViewer()
@@ -461,6 +472,7 @@ class TestAutoContrast:
         assert result["min"] >= 0.0
         assert result["max"] <= 1.0
 
+    @pytest.mark.xfail(reason="Removed with Canvas2D compositor in 2026-04-19 unified viewer; _on_auto_contrast_request removed — delete in Phase 2")
     def test_auto_contrast_all_channels(self):
         """channel=-1 should compute ranges for all channels."""
         viewer = BioImageViewer()
@@ -488,6 +500,7 @@ class TestWidgetLifecycle:
         viewer.set_image(np.zeros((32, 32), dtype=np.uint8))
         viewer.close()
 
+    @pytest.mark.xfail(reason="Removed with Canvas2D compositor in 2026-04-19 unified viewer; _precompute_event removed — delete in Phase 2")
     def test_close_cancels_precompute(self):
         """close() should set the cancel event if one exists."""
         import threading

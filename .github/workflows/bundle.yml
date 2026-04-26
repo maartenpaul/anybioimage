@@ -1,0 +1,36 @@
+name: Viv bundle check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  bundle-in-sync:
+    name: Rebuild & diff against committed bundle
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: anybioimage/frontend/viewer/package-lock.json
+
+      - name: Install npm deps
+        working-directory: anybioimage/frontend/viewer
+        run: npm ci
+
+      - name: Build bundle
+        working-directory: anybioimage/frontend/viewer
+        run: npm run build
+
+      - name: Verify bundle unchanged
+        run: |
+          git diff --exit-code anybioimage/frontend/viewer/dist/viewer-bundle.js \
+            || (echo "viewer-bundle.js out of date; rebuild and commit." && exit 1)
+
+      - name: size-limit
+        working-directory: anybioimage/frontend/viewer
+        run: npm run size

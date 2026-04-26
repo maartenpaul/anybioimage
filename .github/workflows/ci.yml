@@ -45,4 +45,28 @@ jobs:
           uv pip install -e ".[all]"
 
       - name: Run tests
-        run: uv run pytest tests/ -v
+        run: uv run pytest tests/ -v --ignore=tests/integration --ignore=tests/playwright
+
+  integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v4
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          uv venv
+          uv pip install -e ".[all]"
+
+      - name: Install Playwright browsers
+        run: uv run playwright install chromium --with-deps
+
+      - name: Run integration tests
+        env:
+          # CI is slower than a dev laptop; loosen perf budgets by 1.5× [spec §10].
+          ANYBIOIMAGE_PERF_BUDGET_MULTIPLIER: "1.5"
+        run: uv run pytest tests/integration/ -v -m integration

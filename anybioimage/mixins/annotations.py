@@ -1,108 +1,150 @@
-"""Annotations mixin for BioImageViewer."""
+"""Annotations mixin for BioImageViewer.
+
+Phase 2 [spec §5]: annotations are stored in a single `_annotations` traitlet.
+This mixin exposes `.rois_df` / `.polygons_df` / `.points_df` as DataFrame views
+filtered by `kind` so existing notebooks and other mixins (notably the SAM
+integration that observes rectangle/point additions) keep working unchanged.
+"""
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from typing import Any
 
 import pandas as pd
 
 
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _rect_entry(rec: dict[str, Any]) -> dict[str, Any]:
+    x = float(rec["x"])
+    y = float(rec["y"])
+    w = float(rec["width"])
+    h = float(rec["height"])
+    return {
+        "id": str(rec["id"]),
+        "kind": "rect",
+        "geometry": [x, y, x + w, y + h],
+        "label": rec.get("label", ""),
+        "color": rec.get("color", "#ff0000"),
+        "visible": bool(rec.get("visible", True)),
+        "t": int(rec.get("t", 0)),
+        "z": int(rec.get("z", 0)),
+        "created_at": rec.get("created_at") or _now_iso(),
+        "metadata": dict(rec.get("metadata", {})),
+    }
+
+
+def _polygon_entry(rec: dict[str, Any]) -> dict[str, Any]:
+    pts = rec["points"]
+    if pts and isinstance(pts[0], dict):
+        geom = [[float(p["x"]), float(p["y"])] for p in pts]
+    else:
+        geom = [[float(p[0]), float(p[1])] for p in pts]
+    return {
+        "id": str(rec["id"]),
+        "kind": "polygon",
+        "geometry": geom,
+        "label": rec.get("label", ""),
+        "color": rec.get("color", "#00ff00"),
+        "visible": bool(rec.get("visible", True)),
+        "t": int(rec.get("t", 0)),
+        "z": int(rec.get("z", 0)),
+        "created_at": rec.get("created_at") or _now_iso(),
+        "metadata": dict(rec.get("metadata", {})),
+    }
+
+
+def _point_entry(rec: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": str(rec["id"]),
+        "kind": "point",
+        "geometry": [float(rec["x"]), float(rec["y"])],
+        "label": rec.get("label", ""),
+        "color": rec.get("color", "#0066ff"),
+        "visible": bool(rec.get("visible", True)),
+        "t": int(rec.get("t", 0)),
+        "z": int(rec.get("z", 0)),
+        "created_at": rec.get("created_at") or _now_iso(),
+        "metadata": dict(rec.get("metadata", {})),
+    }
+
+
 class AnnotationsMixin:
-    """Mixin class providing annotation management for BioImageViewer.
+    """DataFrame-shaped views over the unified `_annotations` traitlet."""
 
-    This mixin handles ROIs (rectangles), polygons, and point annotations,
-    providing DataFrame interfaces for easy data access and manipulation.
-
-    Attributes expected to be defined by the main class:
-        - _rois_data: List of ROI dicts (traitlet)
-        - _polygons_data: List of polygon dicts (traitlet)
-        - _points_data: List of point dicts (traitlet)
-        - selected_annotation_id: Selected annotation ID (traitlet)
-        - selected_annotation_type: Selected annotation type (traitlet)
-    """
-
+    # ---- rect ----
     @property
     def rois_df(self) -> pd.DataFrame:
-        """Get ROIs as a pandas DataFrame.
-
-        Returns:
-            DataFrame with columns: id, x, y, width, height
-        """
-        if not self._rois_data:
+        rows = []
+        for a in self._annotations:
+            if a.get("kind") != "rect":
+                continue
+            x0, y0, x1, y1 = a["geometry"]
+            rows.append({
+                "id": a["id"], "x": x0, "y": y0,
+                "width": x1 - x0, "height": y1 - y0,
+            })
+        if not rows:
             return pd.DataFrame(columns=["id", "x", "y", "width", "height"])
-        return pd.DataFrame(self._rois_data)
+        return pd.DataFrame(rows)
 
     @rois_df.setter
-    def rois_df(self, df: pd.DataFrame):
-        """Set ROIs from a pandas DataFrame.
+    def rois_df(self, df: pd.DataFrame) -> None:
+        others = [a for a in self._annotations if a.get("kind") != "rect"]
+        new = [_rect_entry(r) for r in df.to_dict("records")]
+        self._annotations = [*others, *new]
 
-        Args:
-            df: DataFrame with columns: id, x, y, width, height
-        """
-        self._rois_data = df.to_dict("records")
-
+    # ---- polygon ----
     @property
     def polygons_df(self) -> pd.DataFrame:
-        """Get polygons as a pandas DataFrame.
-
-        Returns:
-            DataFrame with columns: id, points, num_vertices
-            where points is a list of {x, y} dicts
-        """
-        if not self._polygons_data:
+        rows = []
+        for a in self._annotations:
+            if a.get("kind") != "polygon":
+                continue
+            pts = [{"x": x, "y": y} for x, y in a["geometry"]]
+            rows.append({"id": a["id"], "points": pts, "num_vertices": len(pts)})
+        if not rows:
             return pd.DataFrame(columns=["id", "points", "num_vertices"])
-        data = []
-        for poly in self._polygons_data:
-            data.append({
-                "id": poly["id"],
-                "points": poly["points"],
-                "num_vertices": len(poly["points"])
-            })
-        return pd.DataFrame(data)
+        return pd.DataFrame(rows)
 
     @polygons_df.setter
-    def polygons_df(self, df: pd.DataFrame):
-        """Set polygons from a pandas DataFrame.
+    def polygons_df(self, df: pd.DataFrame) -> None:
+        others = [a for a in self._annotations if a.get("kind") != "polygon"]
+        new = [_polygon_entry(r) for r in df.to_dict("records")]
+        self._annotations = [*others, *new]
 
-        Args:
-            df: DataFrame with columns: id, points
-                where points is a list of {x, y} dicts
-        """
-        records = df.to_dict("records")
-        self._polygons_data = [{"id": r["id"], "points": r["points"]} for r in records]
-
+    # ---- point ----
     @property
     def points_df(self) -> pd.DataFrame:
-        """Get points as a pandas DataFrame.
-
-        Returns:
-            DataFrame with columns: id, x, y
-        """
-        if not self._points_data:
+        rows = []
+        for a in self._annotations:
+            if a.get("kind") != "point":
+                continue
+            x, y = a["geometry"]
+            rows.append({"id": a["id"], "x": x, "y": y})
+        if not rows:
             return pd.DataFrame(columns=["id", "x", "y"])
-        return pd.DataFrame(self._points_data)
+        return pd.DataFrame(rows)
 
     @points_df.setter
-    def points_df(self, df: pd.DataFrame):
-        """Set points from a pandas DataFrame.
+    def points_df(self, df: pd.DataFrame) -> None:
+        others = [a for a in self._annotations if a.get("kind") != "point"]
+        new = [_point_entry(r) for r in df.to_dict("records")]
+        self._annotations = [*others, *new]
 
-        Args:
-            df: DataFrame with columns: id, x, y
-        """
-        self._points_data = df.to_dict("records")
+    # ---- bulk ops ----
+    def clear_rois(self) -> None:
+        self._annotations = [a for a in self._annotations if a.get("kind") != "rect"]
 
-    def clear_rois(self):
-        """Clear all rectangle ROIs."""
-        self._rois_data = []
+    def clear_polygons(self) -> None:
+        self._annotations = [a for a in self._annotations if a.get("kind") != "polygon"]
 
-    def clear_polygons(self):
-        """Clear all polygons."""
-        self._polygons_data = []
+    def clear_points(self) -> None:
+        self._annotations = [a for a in self._annotations if a.get("kind") != "point"]
 
-    def clear_points(self):
-        """Clear all points."""
-        self._points_data = []
-
-    def clear_all_annotations(self):
-        """Clear all annotations (ROIs, polygons, and points)."""
-        self.clear_rois()
-        self.clear_polygons()
-        self.clear_points()
+    def clear_all_annotations(self) -> None:
+        self._annotations = []
         self.selected_annotation_id = ""
         self.selected_annotation_type = ""
