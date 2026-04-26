@@ -1,6 +1,7 @@
 // anybioimage/frontend/viewer/src/chrome/DimControls.jsx
 import React, { useEffect, useState } from 'react';
 import { useModelTrait } from '../model/useModelTrait.js';
+import { ICONS } from './icons.js';
 
 function useLivePlay(model, key, max, speed = 200) {
   const [playing, setPlaying] = useState(false);
@@ -15,17 +16,30 @@ function useLivePlay(model, key, max, speed = 200) {
   return [playing, setPlaying];
 }
 
+function PlayButton({ model, traitKey, max }) {
+  const [playing, setPlaying] = useLivePlay(model, traitKey, max);
+  const label = playing ? 'Pause' : 'Play';
+  return (
+    <button
+      className="play-btn"
+      aria-label={label}
+      aria-pressed={playing}
+      title={label}
+      onClick={() => setPlaying(!playing)}>
+      {playing ? ICONS.pause : ICONS.play}
+    </button>
+  );
+}
+
 function DimSlider({ model, label, traitKey, max, showPlay = false }) {
   const value = useModelTrait(model, traitKey) ?? 0;
-  const [playing, setPlaying] = useLivePlay(model, traitKey, max);
   if (max <= 1) return null;
   return (
     <div className="dim-slider-wrapper">
       <span className="dim-label">{label}</span>
-      {showPlay && (
-        <button className="play-btn" onClick={() => setPlaying(!playing)}>{playing ? '⏸' : '▶'}</button>
-      )}
+      {showPlay && <PlayButton model={model} traitKey={traitKey} max={max} />}
       <input className="dim-slider" type="range" min="0" max={max - 1} value={value}
+        aria-label={`${label} index`}
         onChange={(e) => { model.set(traitKey, parseInt(e.target.value)); model.save_changes(); }} />
       <span className="dim-value">{value}/{max}</span>
     </div>
@@ -40,6 +54,7 @@ function Selector({ model, label, listKey, currentKey }) {
     <div className="scene-selector-wrapper">
       <span className="dim-label">{label}</span>
       <select className="scene-select" value={current || ''}
+        aria-label={label}
         onChange={(e) => { model.set(currentKey, e.target.value); model.save_changes(); }}>
         {items.map((i) => <option key={i} value={i}>{i}</option>)}
       </select>

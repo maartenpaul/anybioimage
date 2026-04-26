@@ -19,6 +19,7 @@
   "devDependencies": {
     "@size-limit/esbuild": "11.1.6",
     "@size-limit/file": "11.1.6",
+    "@testing-library/react": "^16.3.2",
     "esbuild": "0.25.0",
     "jsdom": "^29.0.2",
     "size-limit": "11.1.6",

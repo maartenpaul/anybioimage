@@ -1,47 +1,49 @@
 // anybioimage/frontend/viewer/src/chrome/Toolbar.jsx
 import React from 'react';
 import { useModelTrait } from '../model/useModelTrait.js';
+import { ICONS, TOOL_ARIA, TOOL_SHORTCUT } from './icons.js';
 
-const ICONS = {
-  pan: 'P', select: 'V', reset: '↺', layers: '☰',
-  rect: '▭', polygon: '⬡', point: '•',
-  line: '／', areaMeasure: '△', lineProfile: '∼',
-};
-
-function ToolButton({ model, mode, label, disabled }) {
+function ToolButton({ model, mode }) {
   const current = useModelTrait(model, 'tool_mode');
   const active = current === mode;
+  const aria = TOOL_ARIA[mode];
+  const shortcut = TOOL_SHORTCUT[mode];
+  const title = shortcut ? `${aria} (${shortcut})` : aria;
   return (
     <button
       className={'tool-btn' + (active ? ' active' : '')}
-      disabled={disabled}
-      title={label}
+      aria-label={aria}
+      aria-pressed={active}
+      title={title}
       onClick={() => { model.set('tool_mode', mode); model.save_changes(); }}
-    >{ICONS[mode] || mode}</button>
+    >{ICONS[mode]}</button>
   );
 }
 
 export function Toolbar({ model, onToggleLayers, panelOpen }) {
-  const phase3Disabled = true;   // line / areaMeasure land in Phase 3
   return (
     <div className="toolbar">
       <div className="tool-group">
-        <ToolButton model={model} mode="pan" label="Pan (P)" />
-        <ToolButton model={model} mode="select" label="Select (V)" />
+        <ToolButton model={model} mode="pan" />
+        <ToolButton model={model} mode="select" />
       </div>
       <div className="toolbar-separator" />
       <div className="tool-group">
-        <ToolButton model={model} mode="rect" label="Rectangle (R)" />
-        <ToolButton model={model} mode="polygon" label="Polygon (G)" />
-        <ToolButton model={model} mode="point" label="Point (O)" />
-        <ToolButton model={model} mode="line" label="Line (L)" disabled={phase3Disabled} />
-        <ToolButton model={model} mode="areaMeasure" label="Area measure (M)" disabled={phase3Disabled} />
+        <ToolButton model={model} mode="rect" />
+        <ToolButton model={model} mode="polygon" />
+        <ToolButton model={model} mode="point" />
       </div>
       <div className="toolbar-separator" />
-      <button className="tool-btn" title="Reset view"
+      <button className="tool-btn"
+              aria-label="Reset view"
+              title="Reset view"
               onClick={() => model.send({ kind: 'reset-view' })}>{ICONS.reset}</button>
       <div className="toolbar-separator" />
-      <button className={'layers-btn' + (panelOpen ? ' active' : '')} onClick={onToggleLayers}>
+      <button className={'layers-btn' + (panelOpen ? ' active' : '')}
+              aria-label="Toggle layers panel"
+              aria-pressed={panelOpen}
+              title="Toggle layers panel"
+              onClick={onToggleLayers}>
         <span>{ICONS.layers}</span><span> Layers</span>
       </button>
     </div>
