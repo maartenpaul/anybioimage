@@ -7,6 +7,75 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased] — targeting v0.7.0
 
+### Added — Phase 2.5 (Hardening + Integration Tier)
+
+- **Integration test tier** under `tests/integration/`. Drives a real
+  Playwright + chromium browser against a `marimo run` server, asserts
+  via traitlets, enforces perf budgets. New `integration` pytest marker.
+- **`_render_ready` traitlet** — flipped True by JS once the first image
+  layer renders; integration fixtures block on it.
+- **Perf instrumentation** (`src/util/perf.js`) — `mark`, `measure`,
+  `trace`, `getPerfReport`, `clearPerf`. Gated by `window.__ANYBIOIMAGE_PERF`.
+  Hot paths wired: `layers:build` (+ per-type sub-labels `layers:image`,
+  `layers:masks`, `layers:annotations`, `layers:preview`,
+  `layers:scaleBar`), `pixelSource:getTile`, `buildImageLayerProps`,
+  `interaction:<phase>`.
+- **JS-side LRU tile cache + in-flight deduplication** in
+  `AnywidgetPixelSource`. Cache hits avoid the Python round-trip
+  entirely; concurrent callers for the same tile share one in-flight
+  request rather than flooding the bridge.
+- **SVG icon set** (`src/chrome/icons.js`) — Heroicons-style stroke-based
+  icons for every toolbar tool, plus play/pause for the T-slider.
+- **`NumericInput` component** — reusable numeric entry paired with the
+  contrast sliders. Validates on blur/Enter, reverts on invalid, clamps
+  to [min, max], Escape cancels.
+- **Reset gamma button** (`1`) next to the gamma NumericInput.
+- **Dtype-aware data-value display** — min/max columns now show data
+  values (integer for uint8/uint16, scientific-when-large for uint32,
+  4 sig figs for floats) instead of raw 0–100% percentages. Stored
+  traits stay normalized [0, 1]; conversion uses `ch.data_min` /
+  `ch.data_max`.
+
+### Fixed — Phase 2.5
+
+- **Select tool picks annotations** — `InteractionController.setContext`
+  merges `pickObject` from `DeckCanvas` into the tool context. Select
+  click now sets `selected_annotation_id` to the hit object's id.
+- **Keyboard shortcuts scoped per widget** — `installKeyboard` now
+  attaches to the viewer's root `.bioimage-viewer` div (which is already
+  `tabIndex={0}`). Two widgets on a page no longer stack listeners.
+- **Remote OME-Zarr renders visible pixels** — axes-aware selections +
+  OMERO pre-fetch path.
+- **`layers` useMemo split into per-type sub-memos** — channel toggles
+  now rebuild only the image layer; mask / annotation / preview / scale
+  bar memos don't rerun. `layers:image` p95 < 16 ms (budget met).
+- **Tool singletons → per-instance factories** so two viewers in one
+  notebook don't share tool state.
+
+### Removed — Phase 2.5
+
+- Disabled toolbar placeholders for `line`, `areaMeasure`, `lineProfile`.
+  These will land when Phase 3 brings the tool implementation; until
+  then there is no reason to render an unusable button.
+- The mid-flight `prefetch()` method on `AnywidgetPixelSource` and the
+  two `useEffect` prefetch hooks in `DeckCanvas` — they fought each
+  other (settle prefetch aborted the initial full-dataset prefetch) and
+  flooded the single-threaded Python chunk handler on burst-scrub. The
+  cache + dedup pair already meets the budget on the realistic path. A
+  proper prefetch needs a parallel Python-side handler first; tracked
+  in `docs/superpowers/notes/phase2-5-perf-baseline.md`.
+
+### Infrastructure — Phase 2.5
+
+- `docs/superpowers/notes/widget-isolation-audit.md` — audit of
+  `window.*`, module-level state, shared listeners.
+- `docs/superpowers/notes/phase2-5-perf-baseline.md` — before/after
+  numbers and the rationale for the simplified Task 10 path.
+- `tests/integration/test_console_hygiene.py` — fails the suite on any
+  unfiltered console error/warning during a 10 s demo load. Allow-list
+  covers known-benign GPU driver / swiftshader / marimo dev-asset
+  preload notices only.
+
 ### Added — Phase 2 (Annotate MVP)
 
 - Unified `_annotations` traitlet — single list of typed entries with
