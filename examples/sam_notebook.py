@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.19.6"
+__generated_with = "0.21.1"
 app = marimo.App(width="medium")
 
 
@@ -11,6 +11,7 @@ def _():
     from bioio import BioImage
     import bioio_tifffile
     from anybioimage import BioImageViewer
+
     return BioImage, BioImageViewer, bioio_tifffile, mo, pd
 
 

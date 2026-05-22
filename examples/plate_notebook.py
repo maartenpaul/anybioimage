@@ -15,11 +15,11 @@ def _():
 @app.cell
 def _(BioImageViewer, mo):
     viewer = BioImageViewer()
-    viewer.set_plate("examples/test_plate.zarr")
+    viewer.set_plate("https://uk1s3.embassy.ebi.ac.uk/idr/zarr/v0.4/idr0013A/3451.zarr")
 
     widget = mo.ui.anywidget(viewer)
     widget
-    return (widget,)
+    return
 
 
 @app.cell

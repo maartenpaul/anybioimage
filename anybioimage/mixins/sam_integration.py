@@ -195,6 +195,14 @@ class SAMIntegrationMixin:
                 self._processed_point_ids.add(point_id)
                 self._run_sam_on_point(point)
 
+    def _resize_mask_to_image(self, mask: np.ndarray) -> np.ndarray:
+        """Nearest-neighbor resize mask to (self.height, self.width)."""
+        if mask.shape == (self.height, self.width):
+            return mask
+        ys = (np.arange(self.height) * mask.shape[0] / self.height).astype(np.int32)
+        xs = (np.arange(self.width) * mask.shape[1] / self.width).astype(np.int32)
+        return mask[ys[:, None], xs]
+
     def _prepare_sam_image(self) -> np.ndarray | None:
         """Prepare image array for SAM prediction.
 
@@ -255,6 +263,7 @@ class SAMIntegrationMixin:
 
             if results and len(results) > 0 and results[0].masks is not None:
                 mask_data = results[0].masks.data[0].cpu().numpy().astype(bool)
+                mask_data = self._resize_mask_to_image(mask_data)
                 self._add_sam_mask(mask_data)
                 self._rois_data = [r for r in self._rois_data if r["id"] != roi["id"]]
         except Exception as e:
@@ -278,6 +287,7 @@ class SAMIntegrationMixin:
 
             if results and len(results) > 0 and results[0].masks is not None:
                 mask_data = results[0].masks.data[0].cpu().numpy().astype(bool)
+                mask_data = self._resize_mask_to_image(mask_data)
                 self._add_sam_mask(mask_data)
                 self._points_data = [p for p in self._points_data if p["id"] != point["id"]]
         except Exception as e:
