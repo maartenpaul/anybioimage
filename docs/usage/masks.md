@@ -1,3 +1,8 @@
+---
+title: Masks
+marimo-version: 0.20.4
+---
+
 # Masks & Overlays
 
 Overlay segmentation or labeling results as colored mask layers on top of the base image.

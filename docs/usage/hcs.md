@@ -1,3 +1,8 @@
+---
+title: Hcs
+marimo-version: 0.20.4
+---
+
 # HCS Plates
 
 anybioimage supports OME-Zarr HCS (High-Content Screening) plates. The widget adds **Well** and **FOV** dropdowns for navigation.

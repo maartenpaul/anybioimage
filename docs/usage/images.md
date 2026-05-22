@@ -1,3 +1,8 @@
+---
+title: Images
+marimo-version: 0.20.4
+---
+
 # Images
 
 ## Supported formats

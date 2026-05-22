@@ -1,3 +1,8 @@
+---
+title: Annotations
+marimo-version: 0.20.4
+---
+
 # Annotations
 
 Draw and manage rectangles, polygons, and points directly on the image.

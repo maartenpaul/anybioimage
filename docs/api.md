@@ -1,3 +1,8 @@
+---
+title: Api
+marimo-version: 0.20.4
+---
+
 # API Reference
 
 ## BioImageViewer
@@ -54,6 +59,10 @@ viewer = BioImageViewer()
 | `current_t` | `int` | Current time index |
 | `current_z` | `int` | Current Z index |
 | `_channel_settings` | `list[dict]` | Per-channel name, color, min, max, visible |
+| `canvas_height` | `int` | Widget canvas height in pixels (default 800) |
+| `use_jpeg_tiles` | `bool` | Use JPEG tile encoding for smaller payloads (default `False`; useful on remote JupyterHub) |
+| `scenes` | `list[str]` | Available scenes for multi-scene files (read-only) |
+| `current_scene` | `str` | Active scene name |
 
 ### Properties — annotations
 

@@ -1,3 +1,8 @@
+---
+title: Getting Started
+marimo-version: 0.20.4
+---
+
 # Getting Started
 
 ## Installation

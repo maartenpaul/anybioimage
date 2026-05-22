@@ -1,3 +1,8 @@
+---
+title: Index
+marimo-version: 0.20.4
+---
+
 # anybioimage
 
 Interactive bioimage viewer widget for Jupyter and marimo notebooks. Built on [anywidget](https://anywidget.dev).
@@ -55,7 +60,7 @@ uv pip install "anybioimage[complete]"
     import numpy as np
     from anybioimage import BioImageViewer
 
-    data = np.random.uint8(np.random.rand(3, 512, 512) * 255)  # CYX
+    data = np.random.randint(0, 255, (3, 512, 512), dtype=np.uint8)  # CYX
     viewer = BioImageViewer()
     viewer.set_image(data)
     viewer

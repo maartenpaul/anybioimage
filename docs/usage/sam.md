@@ -1,3 +1,8 @@
+---
+title: Sam
+marimo-version: 0.20.4
+---
+
 # SAM Integration
 
 anybioimage integrates [Segment Anything Model (SAM)](https://segment-anything.com) for interactive segmentation. Draw a rectangle or place a point, and SAM generates a segmentation mask automatically.
