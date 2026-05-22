@@ -1806,7 +1806,7 @@ class BioImageViewer(
         model.on('change:dim_t', rebuildDimControls);
         model.on('change:dim_c', rebuildDimControls);
         model.on('change:_channel_settings', () => {
-            clearTileCache();  // Contrast/color changed
+            clearTileCache();
             updateDimStatus();
             renderCanvas();
             if (panelOpen) { rebuildLayersPanel(); redrawCachedHistograms(); }

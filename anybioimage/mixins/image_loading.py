@@ -79,49 +79,77 @@ class ImageLoadingMixin:
             self._set_numpy_image(data)
 
     def _set_numpy_image(self, data: np.ndarray):
-        """Set the base image from a numpy array.
+        """Set the base image from a numpy array (any shape, up to 5D).
 
-        Args:
-            data: Numpy array to display. Will be squeezed if multi-dimensional.
+        Shape inference: 2D→(1,1,1,Y,X); 3D with last dim ≤4 → (1,C,1,Y,X) treating as HWC;
+        3D otherwise → (1,C,1,Y,X) treating as CYX; 4D → (1,C,Z,Y,X); 5D → TCZYX.
         """
-        if data.ndim > 2:
-            data = data.squeeze()
-            if data.ndim > 2:
-                data = data[0] if data.ndim == 3 else data[0, 0]
+        if not isinstance(data, np.ndarray):
+            data = np.asarray(data)
 
-        self.height, self.width = data.shape[:2]
-        normalized = normalize_image(data)
+        if data.ndim == 2:
+            arr = data[np.newaxis, np.newaxis, np.newaxis]   # (1,1,1,Y,X)
+        elif data.ndim == 3:
+            if data.shape[-1] <= 4:
+                # Likely HWC (e.g. RGB from PIL/OpenCV) — move channel axis to front
+                arr = np.moveaxis(data, -1, 0)[np.newaxis, :, np.newaxis]  # (1,C,1,Y,X)
+            else:
+                # Treat as CYX
+                arr = data[np.newaxis, :, np.newaxis]         # (1,C,1,Y,X)
+        elif data.ndim == 4:
+            arr = data[np.newaxis]                            # assume CZYX → (1,C,Z,Y,X)
+        elif data.ndim == 5:
+            arr = data                                        # assume TCZYX
+        else:
+            while data.ndim > 5:
+                data = data[0]
+            return self._set_numpy_image(data)
 
-        # Store for SAM integration
-        self._image_array = normalized
+        if not arr.flags["C_CONTIGUOUS"]:
+            arr = np.ascontiguousarray(arr)
 
-        # Reset dimension info for simple arrays
-        self.dim_t = 1
-        self.dim_c = 1
-        self.dim_z = 1
-        self.current_t = 0
-        self.current_c = 0
-        self.current_z = 0
-        self.resolution_levels = []
-        self.scenes = []
-        # Store raw data for re-rendering on LUT/contrast changes
-        self._raw_numpy_array = data
+        n_t, n_c, n_z, n_y, n_x = arr.shape
+        channel_ranges = self._compute_channel_ranges_from_array(arr)
 
-        # Always create channel settings so UI controls are available
-        data_min = float(data.min()) if data.size > 0 else 0.0
-        data_max = float(data.max()) if data.size > 0 else 1.0
-        self._channel_settings = [{
-            "name": "Channel 0",
-            "color": "#ffffff",
-            "visible": True,
-            "min": 0.0,
-            "max": 1.0,
-            "data_min": data_min,
-            "data_max": data_max,
-        }]
-        self._bioimage = None
+        with self.hold_trait_notifications():
+            self.height, self.width = n_y, n_x
+            self.dim_t = n_t
+            self.dim_c = n_c
+            self.dim_z = n_z
+            self.current_t = 0
+            self.current_c = 0
+            self.current_z = 0
+            self.resolution_levels = []
+            self.scenes = []
+            self._bioimage = None
+            self._raw_numpy_array = None
+            self._pyramid = None
+            self._pyramid_has_native = False
+            self._full_array = arr
 
-        self.image_data = array_to_base64(normalized)
+            channel_settings = []
+            for i in range(n_c):
+                abs_min, abs_max, _lo, _hi = channel_ranges.get(i, (0.0, 1.0, 0.0, 1.0))
+                channel_settings.append({
+                    "name": f"Channel {i}",
+                    "color": "#ffffff" if n_c == 1 else CHANNEL_COLORS[i % len(CHANNEL_COLORS)],
+                    "visible": True,
+                    "min": 0.0,
+                    "max": 1.0,
+                    "data_min": abs_min,
+                    "data_max": abs_max,
+                })
+            self._channel_settings = channel_settings
+
+        # SAM: store first slice for segmentation
+        self._image_array = arr[0, 0, 0]
+
+        bytes_per_composite = n_y * n_x * 3
+        mem_limit = 512 * 1024 * 1024
+        self._composite_cache_max_size = max(64, min(n_t * n_z, mem_limit // max(bytes_per_composite, 1), 1024))
+
+        self._update_slice()
+        self._start_precompute()
 
     def _set_bioimage(self, img):
         """Set the base image from a BioImage object with lazy loading support.
@@ -281,8 +309,8 @@ class ImageLoadingMixin:
             combined = np.concatenate(samples)
             abs_min = float(combined.min())
             abs_max = float(combined.max())
-            display_lo = float(np.percentile(combined, 1))
-            display_hi = float(np.percentile(combined, 99))
+            display_lo = float(np.percentile(combined, 0.35))
+            display_hi = float(np.percentile(combined, 99.65))
             if display_hi <= display_lo:
                 display_lo, display_hi = abs_min, abs_max
 
@@ -295,15 +323,15 @@ class ImageLoadingMixin:
 
         Returns (abs_min, abs_max, display_lo, display_hi) per channel where
         abs_min/abs_max span the full data range (no clipping) and display_lo/hi
-        are p0.5/p99.5 percentiles used to set the initial contrast window.
+        are p0.35/p99.65 percentiles (Fiji default) used to set the initial contrast window.
         """
         channel_ranges = {}
         for c in range(arr.shape[1]):
             ch = arr[:, c, :, :, :].ravel()
             abs_min = float(ch.min())
             abs_max = float(ch.max())
-            lo = float(np.percentile(ch, 0.5))
-            hi = float(np.percentile(ch, 99.5))
+            lo = float(np.percentile(ch, 0.35))
+            hi = float(np.percentile(ch, 99.65))
             if hi <= lo:
                 lo, hi = abs_min, abs_max
             channel_ranges[c] = (abs_min, abs_max, lo, hi)
@@ -487,7 +515,7 @@ class ImageLoadingMixin:
         start_total = time.perf_counter()
 
         request = change.get("new")
-        if not request or self._bioimage is None:
+        if not request or (self._bioimage is None and self._full_array is None):
             return
 
         t = request.get("t", self.current_t)
@@ -769,7 +797,7 @@ class ImageLoadingMixin:
 
     def _update_slice(self):
         """Update the displayed slice based on current T, Z positions and channel settings."""
-        if self._bioimage is None:
+        if self._bioimage is None and self._full_array is None:
             return
 
         try:
@@ -823,6 +851,10 @@ class ImageLoadingMixin:
                 if len(visible_channels) == 1 and colors[0] == "#ffffff":
                     global_min = data_mins[0] if data_mins and data_mins[0] is not None else None
                     global_max = data_maxs[0] if data_maxs and data_maxs[0] is not None else None
+                    # Constant image (min==max): skip explicit bounds so normalize_image falls
+                    # back to the data's own range (preserves uint8 values as-is).
+                    if global_min is not None and global_max is not None and global_min >= global_max:
+                        global_min = global_max = None
                     normalized = normalize_image(visible_channels[0], global_min, global_max)
                     vmin, vmax = mins[0], maxs[0]
                     if vmin > 0 or vmax < 1:
@@ -875,51 +907,49 @@ class ImageLoadingMixin:
         self._image_array = np.mean(composite, axis=2).astype(np.uint8)
         self.image_data = array_to_base64(composite)
 
+    def _compute_auto_contrast(self, ch_idx: int, t: int | None = None, z: int | None = None) -> dict:
+        """Return normalized {min, max} for ch_idx using p2/p98 of the given slice."""
+        t = t if t is not None else self.current_t
+        z = z if z is not None else self.current_z
+        if self._full_array is not None or self._bioimage is not None:
+            ch_data = self._get_slice_cached(t, ch_idx, z)
+        else:
+            return {"min": 0.0, "max": 1.0}
+        p2, p98 = np.percentile(ch_data, [0.35, 99.65])
+        ch_settings = self._channel_settings[ch_idx]
+        data_min = ch_settings.get("data_min", float(ch_data.min()))
+        data_max = ch_settings.get("data_max", float(ch_data.max()))
+        span = data_max - data_min
+        if span > 0:
+            norm_min = max(0.0, (float(p2) - data_min) / span)
+            norm_max = min(1.0, (float(p98) - data_min) / span)
+        else:
+            norm_min, norm_max = 0.0, 1.0
+        return {"min": norm_min, "max": norm_max}
+
+    def auto_contrast(self, channel: int | None = None) -> None:
+        """Set display range to p2/p98 percentile for one or all channels."""
+        channels = range(len(self._channel_settings)) if channel is None else [channel]
+        new_settings = list(self._channel_settings)
+        for ch_idx in channels:
+            result = self._compute_auto_contrast(ch_idx)
+            new_settings[ch_idx] = {**new_settings[ch_idx], **result}
+        self._channel_settings = new_settings
+
     def _on_auto_contrast_request(self, change):
-        """Compute 2nd-98th percentile contrast for requested channel(s)."""
+        """Handle auto-contrast button click from JS by directly updating _channel_settings."""
         request = change.get("new")
         if not request:
             return
-
         t = request.get("t", self.current_t)
         z = request.get("z", self.current_z)
         channel = request.get("channel", -1)
-        timestamp = request.get("timestamp")
-
-        def compute_range(ch_idx):
-            """Compute normalized percentile range for a single channel."""
-            if self._bioimage is not None:
-                ch_data = self._get_slice_cached(t, ch_idx, z)
-            elif hasattr(self, "_raw_numpy_array") and self._raw_numpy_array is not None:
-                ch_data = self._raw_numpy_array
-            else:
-                return {"min": 0.0, "max": 1.0}
-
-            p2, p98 = np.percentile(ch_data, [2, 98])
-            ch_settings = self._channel_settings[ch_idx]
-            data_min = ch_settings.get("data_min", float(ch_data.min()))
-            data_max = ch_settings.get("data_max", float(ch_data.max()))
-            span = data_max - data_min
-            if span > 0:
-                norm_min = (float(p2) - data_min) / span
-                norm_max = (float(p98) - data_min) / span
-            else:
-                norm_min, norm_max = 0.0, 1.0
-            return {"min": max(0.0, norm_min), "max": min(1.0, norm_max)}
-
-        if channel == -1:
-            ranges = {}
-            for i in range(len(self._channel_settings)):
-                ranges[str(i)] = compute_range(i)
-            self._auto_contrast_result = {"channel": -1, "ranges": ranges, "timestamp": timestamp}
-        else:
-            result = compute_range(channel)
-            self._auto_contrast_result = {
-                "channel": channel,
-                "min": result["min"],
-                "max": result["max"],
-                "timestamp": timestamp,
-            }
+        channels = range(len(self._channel_settings)) if channel == -1 else [channel]
+        new_settings = list(self._channel_settings)
+        for ch_idx in channels:
+            result = self._compute_auto_contrast(ch_idx, t, z)
+            new_settings[ch_idx] = {**new_settings[ch_idx], **result}
+        self._channel_settings = new_settings
 
     def _on_histogram_request(self, change):
         """Compute intensity histogram for requested channel(s)."""
@@ -933,10 +963,8 @@ class ImageLoadingMixin:
         timestamp = request.get("timestamp")
 
         def compute_histogram(ch_idx):
-            if self._bioimage is not None:
+            if self._full_array is not None or self._bioimage is not None:
                 ch_data = self._get_slice_cached(t, ch_idx, z)
-            elif hasattr(self, "_raw_numpy_array") and self._raw_numpy_array is not None:
-                ch_data = self._raw_numpy_array
             else:
                 return [0] * 256
 
@@ -957,19 +985,16 @@ class ImageLoadingMixin:
 
     def _on_channel_settings_change(self, change):
         """Observer callback when channel settings change."""
-        # For numpy arrays (no BioImage), re-render directly
-        if self._bioimage is None:
-            self._update_numpy_image()
-            return
-
         if getattr(self, "_precompute_event", None) is not None:
             self._precompute_event.set()
         self._tile_cache.clear()
         composite_cache = getattr(self, "_composite_cache", None)
         if isinstance(composite_cache, dict):
             composite_cache.clear()
-        self._update_slice()
-        self._start_precompute()
+        if self._use_tile_mode:
+            self._start_precompute()
+        else:
+            self._update_slice()
 
     def _clear_caches(self, clear_full_array: bool = True):
         """Clear all caches. Pass clear_full_array=False to preserve the eager-loaded array."""

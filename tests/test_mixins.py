@@ -21,21 +21,23 @@ class TestImageLoadingNumpyShapes:
         assert viewer.dim_z == 1
 
     def test_3d_cyx(self):
-        """3D array interpreted as CYX after squeeze."""
+        """3D CYX array is preserved as 3-channel image."""
         viewer = BioImageViewer()
         arr = np.zeros((3, 64, 128), dtype=np.uint8)
         viewer.set_image(arr)
-        # After squeeze: (3, 64, 128) → 3D, takes [0] → (64, 128)
         assert viewer.width == 128
         assert viewer.height == 64
+        assert viewer.dim_c == 3
 
-    def test_4d_squeezes_to_2d(self):
-        """4D array with singleton dims squeezes to 2D."""
+    def test_4d_czyx(self):
+        """4D CZYX array is preserved with all channels and Z slices."""
         viewer = BioImageViewer()
-        arr = np.zeros((1, 64, 128, 1), dtype=np.uint8)
+        arr = np.zeros((2, 1, 64, 128), dtype=np.uint8)  # 2 channels, 1 Z, 64×128
         viewer.set_image(arr)
         assert viewer.width == 128
         assert viewer.height == 64
+        assert viewer.dim_c == 2
+        assert viewer.dim_z == 1
 
     def test_5d_squeezes_to_2d(self):
         """5D TCZYX with T=C=Z=1 squeezes to 2D."""
@@ -59,13 +61,14 @@ class TestImageLoadingNumpyShapes:
         viewer.set_image(arr)
         assert len(viewer.image_data) > 0
 
-    def test_set_image_stores_raw_array(self):
-        """Raw array stored for re-rendering on LUT changes."""
+    def test_set_image_stores_full_array(self):
+        """Image data stored in _full_array as TCZYX for rendering."""
         viewer = BioImageViewer()
         arr = np.arange(64, dtype=np.uint8).reshape(8, 8)
         viewer.set_image(arr)
-        assert viewer._raw_numpy_array is not None
-        np.testing.assert_array_equal(viewer._raw_numpy_array, arr)
+        assert viewer._full_array is not None
+        assert viewer._full_array.shape == (1, 1, 1, 8, 8)
+        np.testing.assert_array_equal(viewer._full_array[0, 0, 0], arr)
 
     def test_set_image_replaces_previous(self):
         viewer = BioImageViewer()
@@ -443,26 +446,21 @@ class TestAutoContrast:
     """Test auto-contrast computation for numpy images."""
 
     def test_auto_contrast_numpy(self):
-        """Auto contrast on numpy array computes percentile range."""
+        """Auto contrast on numpy array updates _channel_settings directly."""
         viewer = BioImageViewer()
-        # Create image with known distribution: mostly low values, some high
         arr = np.zeros((64, 64), dtype=np.uint8)
         arr[30:34, 30:34] = 255  # small bright region
         viewer.set_image(arr)
 
-        # Trigger auto contrast
         viewer._on_auto_contrast_request({
             "new": {"channel": 0, "timestamp": 123}
         })
-        result = viewer._auto_contrast_result
-        assert result["channel"] == 0
-        assert result["timestamp"] == 123
-        # Most pixels are 0, so p2 should be 0 and p98 should be 0 too (mostly dark)
-        assert result["min"] >= 0.0
-        assert result["max"] <= 1.0
+        s = viewer._channel_settings[0]
+        assert 0.0 <= s["min"] <= 1.0
+        assert 0.0 <= s["max"] <= 1.0
 
     def test_auto_contrast_all_channels(self):
-        """channel=-1 should compute ranges for all channels."""
+        """channel=-1 should update all channels in _channel_settings."""
         viewer = BioImageViewer()
         arr = np.random.randint(0, 255, (32, 32), dtype=np.uint8)
         viewer.set_image(arr)
@@ -470,10 +468,9 @@ class TestAutoContrast:
         viewer._on_auto_contrast_request({
             "new": {"channel": -1, "timestamp": 456}
         })
-        result = viewer._auto_contrast_result
-        assert result["channel"] == -1
-        assert "ranges" in result
-        assert "0" in result["ranges"]
+        for ch in viewer._channel_settings:
+            assert 0.0 <= ch["min"] <= 1.0
+            assert 0.0 <= ch["max"] <= 1.0
 
 
 class TestWidgetLifecycle:

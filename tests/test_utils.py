@@ -427,16 +427,17 @@ class TestBioImageViewer:
         assert viewer.width == 64
         assert viewer.height == 64
 
-    def test_set_image_numpy_always_2d(self):
+    def test_set_image_numpy_5d(self):
         from anybioimage import BioImageViewer
         viewer = BioImageViewer()
-        # Raw numpy arrays are squeezed to 2D — use BioImage for 5D support
         arr = np.random.randint(0, 255, (2, 3, 1, 32, 32), dtype=np.uint8)
         viewer.set_image(arr)
-        # Squeezed to 2D, so dims reset to 1
-        assert viewer.dim_t == 1
-        assert viewer.dim_c == 1
+        # 5D TCZYX is fully supported — all dimensions preserved
+        assert viewer.dim_t == 2
+        assert viewer.dim_c == 3
         assert viewer.dim_z == 1
+        assert viewer.width == 32
+        assert viewer.height == 32
 
     def test_add_and_clear_mask(self):
         from anybioimage import BioImageViewer
