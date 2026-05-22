@@ -27,7 +27,9 @@ viewer.set_image(np.random.randint(0, 255, (512, 512), dtype=np.uint8))
 viewer  # displays in notebook
 ```
 
-### Jupyter
+![](images/image_000.png)
+
+### Example with a tiff image
 
 ```python
 from anybioimage import BioImageViewer
@@ -38,6 +40,7 @@ viewer = BioImageViewer()
 viewer.set_image(BioImage("image.tif", reader=bioio_tifffile.Reader))
 viewer  # renders inline
 ```
+![](images/image_001.png)
 
 ### marimo
 
@@ -64,9 +67,10 @@ import bioio_tifffile
 import bioio_ome_zarr
 
 img = BioImage("image.tif",  reader=bioio_tifffile.Reader)
-img = BioImage("image.zarr", reader=bioio_ome_zarr.Reader)
 viewer.set_image(img)  # activates T/Z sliders, per-channel LUT controls
 ```
+
+![](images/image_002.png)
 
 ### Multi-channel composites
 
@@ -79,19 +83,21 @@ settings[0] = {**settings[0], "name": "DAPI", "color": "#0000ff"}
 viewer._channel_settings = settings
 ```
 
+
 ### Mask overlays
 
 Add segmentation masks as overlay layers with configurable color, opacity, and contour rendering:
 
 ```python
 viewer.add_mask(labels, name="Nuclei", color="#ff0000", opacity=0.5)
-viewer.add_mask(cells, name="Cells", color="#00ff00", contours_only=True)
 
 # Manage masks
 viewer.update_mask_settings(mask_id, opacity=0.3)
 viewer.remove_mask(mask_id)
 viewer.clear_masks()
 ```
+
+![](images/image_003.gif)
 
 ### HCS plate support
 
@@ -131,6 +137,8 @@ viewer.enable_sam(model_type="sam_b")       # SAM base, ~375 MB
 ```
 
 Requires `uv pip install "anybioimage[sam]"` (Python 3.10–3.12).
+
+![](images/image_004.gif)
 
 ## Optional dependencies
 
