@@ -1606,8 +1606,7 @@ class BioImageViewer(
                     x: Math.round(imgCoords.x),
                     y: Math.round(imgCoords.y)
                 };
-                points.push(newPoint);
-                model.set('_points_data', [...points]);
+                model.set('_points_data', [...points, newPoint]);
                 model.save_changes();
                 renderCanvas();
             } else if (mode === 'pan') {
@@ -1634,8 +1633,7 @@ class BioImageViewer(
                         id: 'poly_' + Date.now(),
                         points: currentPolygonPoints.map(p => ({ x: Math.round(p.x), y: Math.round(p.y) }))
                     };
-                    polygons.push(newPoly);
-                    model.set('_polygons_data', [...polygons]);
+                    model.set('_polygons_data', [...polygons, newPoly]);
                     model.save_changes();
                     currentPolygonPoints = [];
                     renderCanvas();
@@ -1656,8 +1654,7 @@ class BioImageViewer(
                 id: 'poly_' + Date.now(),
                 points: currentPolygonPoints.map(p => ({ x: Math.round(p.x), y: Math.round(p.y) }))
             };
-            polygons.push(newPoly);
-            model.set('_polygons_data', [...polygons]);
+            model.set('_polygons_data', [...polygons, newPoly]);
             model.save_changes();
             currentPolygonPoints = [];
             renderCanvas();
@@ -1717,8 +1714,7 @@ class BioImageViewer(
                         width: Math.round(currentDrawRect.width),
                         height: Math.round(currentDrawRect.height)
                     };
-                    rois.push(newRoi);
-                    model.set('_rois_data', [...rois]);
+                    model.set('_rois_data', [...rois, newRoi]);
                     model.save_changes();
                 }
                 currentDrawRect = null;
