@@ -2,6 +2,8 @@
 
 Interactive bioimage viewer widget for Jupyter and marimo notebooks. Built on [anywidget](https://anywidget.dev), it supports multi-dimensional images, multi-channel composites, mask overlays, annotation tools, and HCS plate navigation.
 
+Documentation: https://maartenpaul.github.io/anybioimage/
+
 ## Installation
 
 ```bash
