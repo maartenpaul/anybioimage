@@ -148,6 +148,6 @@ __marimo__/
 *.png
 *.jpg
 *.jpeg
-
+!images/*.png
 # Git worktrees
 .worktrees/
