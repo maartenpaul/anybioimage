@@ -9,12 +9,12 @@ from anybioimage import BioImageViewer
 
 @pytest.fixture
 def bioimage_viewer():
-    """BioImageViewer loaded with the small fluocell.tif example (791 KB, multi-channel)."""
-    bioio = pytest.importorskip("bioio")
-    bioio_tifffile = pytest.importorskip("bioio_tifffile")
-    img = bioio.BioImage("examples/fluocell.tif", reader=bioio_tifffile.Reader)
+    """BioImageViewer loaded with a synthetic 2-channel uint16 image (no external files needed)."""
+    rng = np.random.default_rng(42)
+    # TCZYX: 1 time, 2 channels, 1 z, 64x64 — small enough to stay out of tile mode
+    data = rng.integers(0, 65536, size=(1, 2, 1, 64, 64), dtype=np.uint16)
     viewer = BioImageViewer()
-    viewer.set_image(img)
+    viewer.set_image(data)
     return viewer
 
 

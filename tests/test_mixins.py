@@ -496,4 +496,4 @@ class TestWidgetLifecycle:
 
     def test_version_accessible(self):
         import anybioimage
-        assert anybioimage.__version__ == "0.3.0"
+        assert anybioimage.__version__ == "0.3.1"
