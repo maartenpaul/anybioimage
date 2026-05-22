@@ -1,0 +1,45 @@
+{
+  "name": "anybioimage-viewer-bundle",
+  "version": "0.7.0-alpha.0",
+  "private": true,
+  "description": "Viv rendering bundle for anybioimage",
+  "type": "module",
+  "scripts": {
+    "build": "node build.config.mjs",
+    "size": "size-limit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@deck.gl/react": "9.0.38",
+    "@hms-dbmi/viv": "0.17.3",
+    "deck.gl": "9.0.38",
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
+  },
+  "devDependencies": {
+    "@size-limit/esbuild": "11.1.6",
+    "@size-limit/file": "11.1.6",
+    "@testing-library/react": "^16.3.2",
+    "esbuild": "^0.28.0",
+    "jsdom": "^29.0.2",
+    "size-limit": "11.1.6",
+    "vitest": "^4.1.4"
+  },
+  "overrides": {
+    "@luma.gl/core": "9.0.28",
+    "@luma.gl/engine": "9.0.28",
+    "@luma.gl/webgl": "9.0.28",
+    "@luma.gl/shadertools": "9.0.28",
+    "@luma.gl/constants": "9.0.28",
+    "@deck.gl/core": "9.0.38",
+    "@deck.gl/layers": "9.0.38",
+    "@deck.gl/extensions": "9.0.38",
+    "@deck.gl/mesh-layers": "9.0.38"
+  },
+  "size-limit": [
+    {
+      "path": "dist/viewer-bundle.js",
+      "limit": "4 MB"
+    }
+  ]
+}

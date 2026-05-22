@@ -427,6 +427,7 @@ class TestBioImageViewer:
         assert viewer.width == 64
         assert viewer.height == 64
 
+    @pytest.mark.xfail(reason="Removed with Canvas2D compositor in 2026-04-19 unified viewer; new pipeline preserves all 5D dims from numpy — delete in Phase 2")
     def test_set_image_numpy_always_2d(self):
         from anybioimage import BioImageViewer
         viewer = BioImageViewer()

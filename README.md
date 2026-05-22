@@ -16,26 +16,23 @@ uv pip install "anybioimage[complete]"
 
 ## Quick Start
 
-### Minimal example (NumPy only)
-
 ```python
-import numpy as np
 from anybioimage import BioImageViewer
 
-viewer = BioImageViewer()
-viewer.set_image(np.random.randint(0, 255, (512, 512), dtype=np.uint8))
-viewer  # displays in notebook
+v = BioImageViewer()
+v.set_image("https://s3.example.com/my.ome.zarr")   # remote OME-Zarr
+v.set_image("local.tif")                             # local TIFF / CZI / ND2
+v.set_image(numpy_array)                             # in-memory numpy
+v.set_plate("plate.zarr")                            # HCS plate
 ```
 
 ### Jupyter
 
 ```python
 from anybioimage import BioImageViewer
-from bioio import BioImage
-import bioio_tifffile
 
 viewer = BioImageViewer()
-viewer.set_image(BioImage("image.tif", reader=bioio_tifffile.Reader))
+viewer.set_image("image.tif")  # or pass a numpy array / remote URL
 viewer  # renders inline
 ```
 
@@ -44,11 +41,9 @@ viewer  # renders inline
 ```python
 import marimo as mo
 from anybioimage import BioImageViewer
-from bioio import BioImage
-import bioio_tifffile
 
 viewer = BioImageViewer()
-viewer.set_image(BioImage("image.tif", reader=bioio_tifffile.Reader))
+viewer.set_image("image.tif")  # or pass a numpy array / remote URL
 mo.ui.anywidget(viewer)
 ```
 
@@ -141,6 +136,21 @@ Requires `uv pip install "anybioimage[sam]"` (Python 3.10–3.12).
 | `sam` | `ultralytics` (PyTorch) | SAM segmentation |
 | `all` | bioio + contours | Recommended (no PyTorch) |
 | `complete` | all + sam | Everything |
+
+## Rendering
+
+`BioImageViewer` uses a unified WebGL2 rendering pipeline (Viv + deck.gl) for every input format. Browsers without WebGL2 see a guidance message instead of the widget.
+
+> **Note:** The `render_backend` kwarg is accepted for one release with a `DeprecationWarning`; it is ignored and will be removed in v0.8.0.
+
+## Acknowledgements
+
+Built on the following MIT-licensed projects:
+
+- [`@hms-dbmi/viv`](https://github.com/hms-dbmi/viv) — WebGL2 multiscale image rendering
+- [`zarrita.js`](https://github.com/manzt/zarrita.js) — browser-side Zarr v2/v3 client (bundled by Viv)
+- [`deck.gl`](https://github.com/visgl/deck.gl) — view and layer management
+- [`nebula.gl`](https://github.com/uber/nebula.gl) — annotation editing layers (used from Phase 3)
 
 ## License
 

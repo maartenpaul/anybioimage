@@ -46,6 +46,8 @@ dev = [
     "pytest>=7.0.0",
     "ruff>=0.1.0",
     "ty>=0.0.1a0",
+    "playwright>=1.47",
+    "pytest-playwright>=0.5",
 ]
 all = [
     "anybioimage[contours,bioio,dev]",
@@ -62,11 +64,31 @@ Changelog = "https://github.com/maartenpaul/anybioimage/blob/main/CHANGELOG.md"
 Issues = "https://github.com/maartenpaul/anybioimage/issues"
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-jupyter-builder>=0.9"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["anybioimage"]
+exclude = [
+    "anybioimage/frontend/viewer/node_modules/",
+    "anybioimage/frontend/viewer/src/",
+    "anybioimage/frontend/viewer/package.json",
+    "anybioimage/frontend/viewer/package-lock.json",
+    "anybioimage/frontend/viewer/build.config.mjs",
+    "anybioimage/frontend/viewer/.gitignore",
+]
+
+[tool.hatch.build.targets.wheel.force-include]
+"anybioimage/frontend/viewer/dist/viewer-bundle.js" = "anybioimage/frontend/viewer/dist/viewer-bundle.js"
+
+[tool.hatch.build.hooks.jupyter-builder]
+build-function = "hatch_jupyter_builder.npm_builder"
+ensured-targets = ["anybioimage/frontend/viewer/dist/viewer-bundle.js"]
+
+[tool.hatch.build.hooks.jupyter-builder.build-kwargs]
+path = "anybioimage/frontend/viewer"
+build_cmd = "build"
+npm = ["npm"]
 
 [tool.hatch.build.targets.sdist]
 include = [
@@ -75,6 +97,9 @@ include = [
     "LICENSE",
     "pyproject.toml",
 ]
+exclude = [
+    "anybioimage/frontend/viewer/node_modules/",
+]
 
 [dependency-groups]
 dev = [
@@ -82,6 +107,14 @@ dev = [
     "pytest>=7.0.0",
     "ruff>=0.1.0",
     "ty>=0.0.1a0",
+    "playwright>=1.47",
+    "pytest-playwright>=0.5",
+]
+
+[tool.pytest.ini_options]
+markers = [
+    "playwright: marks tests as Playwright browser tests (requires marimo server + browser)",
+    "integration: marks tests as end-to-end integration tests (marimo server + browser; asserts via traitlets)",
 ]
 
 [tool.ruff]
