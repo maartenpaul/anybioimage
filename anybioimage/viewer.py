@@ -1607,7 +1607,9 @@ class BioImageViewer(
                 const newPoint = {
                     id: 'pt_' + Date.now(),
                     x: Math.round(imgCoords.x),
-                    y: Math.round(imgCoords.y)
+                    y: Math.round(imgCoords.y),
+                    t: model.get('current_t'),
+                    z: model.get('current_z')
                 };
                 model.set('_points_data', [...points, newPoint]);
                 model.save_changes();
@@ -1634,7 +1636,9 @@ class BioImageViewer(
                     const polygons = model.get('_polygons_data') || [];
                     const newPoly = {
                         id: 'poly_' + Date.now(),
-                        points: currentPolygonPoints.map(p => ({ x: Math.round(p.x), y: Math.round(p.y) }))
+                        points: currentPolygonPoints.map(p => ({ x: Math.round(p.x), y: Math.round(p.y) })),
+                        t: model.get('current_t'),
+                        z: model.get('current_z')
                     };
                     model.set('_polygons_data', [...polygons, newPoly]);
                     model.save_changes();
@@ -1655,7 +1659,9 @@ class BioImageViewer(
             const polygons = model.get('_polygons_data') || [];
             const newPoly = {
                 id: 'poly_' + Date.now(),
-                points: currentPolygonPoints.map(p => ({ x: Math.round(p.x), y: Math.round(p.y) }))
+                points: currentPolygonPoints.map(p => ({ x: Math.round(p.x), y: Math.round(p.y) })),
+                t: model.get('current_t'),
+                z: model.get('current_z')
             };
             model.set('_polygons_data', [...polygons, newPoly]);
             model.save_changes();
@@ -1715,7 +1721,9 @@ class BioImageViewer(
                         x: Math.round(currentDrawRect.x),
                         y: Math.round(currentDrawRect.y),
                         width: Math.round(currentDrawRect.width),
-                        height: Math.round(currentDrawRect.height)
+                        height: Math.round(currentDrawRect.height),
+                        t: model.get('current_t'),
+                        z: model.get('current_z')
                     };
                     model.set('_rois_data', [...rois, newRoi]);
                     model.save_changes();
