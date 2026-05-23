@@ -337,7 +337,7 @@ class TestAnnotations:
         viewer = BioImageViewer()
         df = viewer.rois_df
         assert isinstance(df, pd.DataFrame)
-        assert list(df.columns) == ["id", "x", "y", "width", "height"]
+        assert list(df.columns) == ["id", "x", "y", "width", "height", "t", "z"]
 
     def test_rois_df_with_data(self):
         viewer = BioImageViewer()

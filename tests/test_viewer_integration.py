@@ -267,3 +267,62 @@ class TestAnnotationDataFrameEdgeCases:
         viewer = BioImageViewer()
         viewer.clear_all_annotations()  # Should not raise
         assert viewer._rois_data == []
+
+
+class TestAnnotations:
+    """Test t/z coordinate support in annotation DataFrames."""
+
+    def test_rois_df_has_tz_columns(self):
+        viewer = BioImageViewer()
+        df = viewer.rois_df
+        assert "t" in df.columns
+        assert "z" in df.columns
+
+    def test_polygons_df_has_tz_columns(self):
+        viewer = BioImageViewer()
+        df = viewer.polygons_df
+        assert "t" in df.columns
+        assert "z" in df.columns
+
+    def test_points_df_has_tz_columns(self):
+        viewer = BioImageViewer()
+        df = viewer.points_df
+        assert "t" in df.columns
+        assert "z" in df.columns
+
+    def test_rois_df_setter_defaults_missing_tz(self):
+        """Loading old ROI data without t/z defaults both to 0."""
+        viewer = BioImageViewer()
+        import pandas as pd
+        df = pd.DataFrame([{"id": "r1", "x": 10, "y": 20, "width": 30, "height": 40}])
+        viewer.rois_df = df
+        assert viewer._rois_data[0]["t"] == 0
+        assert viewer._rois_data[0]["z"] == 0
+
+    def test_points_df_setter_defaults_missing_tz(self):
+        viewer = BioImageViewer()
+        import pandas as pd
+        df = pd.DataFrame([{"id": "pt1", "x": 5, "y": 10}])
+        viewer.points_df = df
+        assert viewer._points_data[0]["t"] == 0
+        assert viewer._points_data[0]["z"] == 0
+
+    def test_polygons_df_setter_defaults_missing_tz(self):
+        viewer = BioImageViewer()
+        import pandas as pd
+        pts = [{"x": 0, "y": 0}, {"x": 10, "y": 0}, {"x": 10, "y": 10}]
+        df = pd.DataFrame([{"id": "p1", "points": pts}])
+        viewer.polygons_df = df
+        assert viewer._polygons_data[0]["t"] == 0
+        assert viewer._polygons_data[0]["z"] == 0
+
+    def test_annotations_tz_roundtrip(self):
+        """t/z values survive a DataFrame get→set round-trip."""
+        viewer = BioImageViewer()
+        viewer._rois_data = [{"id": "r1", "x": 0, "y": 0, "width": 10, "height": 10, "t": 2, "z": 3}]
+        df = viewer.rois_df
+        assert df.iloc[0]["t"] == 2
+        assert df.iloc[0]["z"] == 3
+        viewer.rois_df = df
+        assert viewer._rois_data[0]["t"] == 2
+        assert viewer._rois_data[0]["z"] == 3
