@@ -135,6 +135,9 @@ class BioImageViewer(
     selected_annotation_id = traitlets.Unicode("").tag(sync=True)
     selected_annotation_type = traitlets.Unicode("").tag(sync=True)
 
+    # Annotation scope: 'all' | 'slice' controls whether annotations are visible on all slices or only current T/Z
+    annotation_scope = traitlets.Unicode("all").tag(sync=True)
+
     # SAM label deletion - set coordinates to delete SAM label at that position
     _delete_sam_at = traitlets.Dict(allow_none=True).tag(sync=True)
 

@@ -340,3 +340,12 @@ class TestAnnotations:
         df = viewer.points_df
         assert df.iloc[0]["t"] == 0
         assert df.iloc[0]["z"] == 0
+
+    def test_annotation_scope_default(self):
+        viewer = BioImageViewer()
+        assert viewer.annotation_scope == 'all'
+
+    def test_annotation_scope_set(self):
+        viewer = BioImageViewer()
+        viewer.annotation_scope = 'slice'
+        assert viewer.annotation_scope == 'slice'
