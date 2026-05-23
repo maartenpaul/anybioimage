@@ -18,7 +18,13 @@ class AnnotationsMixin:
     def rois_df(self) -> pd.DataFrame:
         if not self._rois_data:
             return pd.DataFrame(columns=["id", "x", "y", "width", "height", "t", "z"])
-        return pd.DataFrame(self._rois_data)
+        data = []
+        for roi in self._rois_data:
+            entry = dict(roi)
+            entry["t"] = roi.get("t", 0)
+            entry["z"] = roi.get("z", 0)
+            data.append(entry)
+        return pd.DataFrame(data)
 
     @rois_df.setter
     def rois_df(self, df: pd.DataFrame):
@@ -60,7 +66,13 @@ class AnnotationsMixin:
     def points_df(self) -> pd.DataFrame:
         if not self._points_data:
             return pd.DataFrame(columns=["id", "x", "y", "t", "z"])
-        return pd.DataFrame(self._points_data)
+        data = []
+        for pt in self._points_data:
+            entry = dict(pt)
+            entry["t"] = pt.get("t", 0)
+            entry["z"] = pt.get("z", 0)
+            data.append(entry)
+        return pd.DataFrame(data)
 
     @points_df.setter
     def points_df(self, df: pd.DataFrame):

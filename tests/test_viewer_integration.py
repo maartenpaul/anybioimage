@@ -4,6 +4,7 @@ import base64
 from io import BytesIO
 
 import numpy as np
+import pandas as pd
 from PIL import Image
 
 from anybioimage import BioImageViewer
@@ -293,7 +294,6 @@ class TestAnnotations:
     def test_rois_df_setter_defaults_missing_tz(self):
         """Loading old ROI data without t/z defaults both to 0."""
         viewer = BioImageViewer()
-        import pandas as pd
         df = pd.DataFrame([{"id": "r1", "x": 10, "y": 20, "width": 30, "height": 40}])
         viewer.rois_df = df
         assert viewer._rois_data[0]["t"] == 0
@@ -301,7 +301,6 @@ class TestAnnotations:
 
     def test_points_df_setter_defaults_missing_tz(self):
         viewer = BioImageViewer()
-        import pandas as pd
         df = pd.DataFrame([{"id": "pt1", "x": 5, "y": 10}])
         viewer.points_df = df
         assert viewer._points_data[0]["t"] == 0
@@ -309,7 +308,6 @@ class TestAnnotations:
 
     def test_polygons_df_setter_defaults_missing_tz(self):
         viewer = BioImageViewer()
-        import pandas as pd
         pts = [{"x": 0, "y": 0}, {"x": 10, "y": 0}, {"x": 10, "y": 10}]
         df = pd.DataFrame([{"id": "p1", "points": pts}])
         viewer.polygons_df = df
@@ -326,3 +324,19 @@ class TestAnnotations:
         viewer.rois_df = df
         assert viewer._rois_data[0]["t"] == 2
         assert viewer._rois_data[0]["z"] == 3
+
+    def test_rois_df_getter_defaults_missing_tz(self):
+        """Getter normalises missing t/z to 0 (e.g. from JS-created annotations)."""
+        viewer = BioImageViewer()
+        viewer._rois_data = [{"id": "r1", "x": 0, "y": 0, "width": 10, "height": 10}]
+        df = viewer.rois_df
+        assert df.iloc[0]["t"] == 0
+        assert df.iloc[0]["z"] == 0
+
+    def test_points_df_getter_defaults_missing_tz(self):
+        """Getter normalises missing t/z to 0 (e.g. from JS-created annotations)."""
+        viewer = BioImageViewer()
+        viewer._points_data = [{"id": "pt1", "x": 5, "y": 10}]
+        df = viewer.points_df
+        assert df.iloc[0]["t"] == 0
+        assert df.iloc[0]["z"] == 0
