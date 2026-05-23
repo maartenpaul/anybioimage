@@ -7,34 +7,22 @@ app = marimo.App(width="full")
 @app.cell
 def _():
     import marimo as mo
-    import pandas as pd
     from bioio import BioImage
     import bioio_tifffile
     import bioio_ome_zarr
     from anybioimage import BioImageViewer
 
-    return BioImage, BioImageViewer, bioio_ome_zarr, mo, pd
+    return BioImage, BioImageViewer, bioio_ome_zarr, mo
 
 
 @app.cell
 def _(BioImage, bioio_ome_zarr):
     #img = BioImage("examples/fluocell.tif", reader=bioio_tifffile.Reader)
 
-    #img = BioImage("examples/image.tif", reader=bioio_tifffile.Reader)
-    img = BioImage("examples/image.zarr", reader=bioio_ome_zarr.Reader)
-
-    #mask = BioImage("examples/mask.tif", reader=bioio_tifffile.Reader)
+    img = BioImage("https://livingobjects.ebi.ac.uk/idr/zarr/v0.1/6001243.zarr", reader=bioio_ome_zarr.Reader)
 
     img.shape
     return (img,)
-
-
-@app.cell
-def _(BioImage):
-    path = "https://allencell.s3.amazonaws.com/aics/nuc-morph-dataset/hipsc_fov_nuclei_timelapse_dataset/hipsc_fov_nuclei_timelapse_data_used_for_analysis/baseline_colonies_fov_timelapse_dataset/20200323_09_small/raw.ome.zarr"
-    image = BioImage(path)
-    print(image.get_image_dask_data())
-    return
 
 
 @app.cell
@@ -57,7 +45,10 @@ def _(BioImageViewer, img, mo):
     # You can add additional masks with different settings:
     # viewer.add_mask(another_mask, name="Nuclei", color="#00ff00", opacity=0.3)
     # viewer.add_mask(cell_mask, name="Cells", color="#0000ff", contours_only=True)
-
+    viewer.current_z = 20  # set before or after displaying
+    settings = list(viewer._channel_settings)
+    settings[1] = {**settings[1], "name": "DAPI", "color": "#0000FF"}
+    viewer._channel_settings = settings
     widget = mo.ui.anywidget(viewer)
     widget
     return (widget,)
