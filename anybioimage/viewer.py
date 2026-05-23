@@ -1354,11 +1354,16 @@ class BioImageViewer(
                 }
             }
 
+            const annScope = model.get('annotation_scope');
+            const annT = model.get('current_t');
+            const annZ = model.get('current_z');
+            const inScope = (a) => annScope === 'all' || ((a.t ?? 0) === annT && (a.z ?? 0) === annZ);
+
             const selectedId = model.get('selected_annotation_id');
             const selectedType = model.get('selected_annotation_type');
 
             if (model.get('rois_visible')) {
-                const rois = model.get('_rois_data') || [];
+                const rois = (model.get('_rois_data') || []).filter(inScope);
                 const roiColor = model.get('roi_color');
                 for (const roi of rois) {
                     const isSelected = selectedType === 'roi' && selectedId === roi.id;
@@ -1377,7 +1382,7 @@ class BioImageViewer(
             }
 
             if (model.get('polygons_visible')) {
-                const polygons = model.get('_polygons_data') || [];
+                const polygons = (model.get('_polygons_data') || []).filter(inScope);
                 const polyColor = model.get('polygon_color');
                 for (const poly of polygons) {
                     if (poly.points.length < 2) continue;
@@ -1403,7 +1408,7 @@ class BioImageViewer(
             }
 
             if (model.get('points_visible')) {
-                const points = model.get('_points_data') || [];
+                const points = (model.get('_points_data') || []).filter(inScope);
                 const ptColor = model.get('point_color');
                 const ptRadius = model.get('point_radius');
                 for (const pt of points) {
