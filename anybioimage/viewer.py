@@ -1796,6 +1796,7 @@ class BioImageViewer(
         model.on('change:_rois_data', renderCanvas);
         model.on('change:_polygons_data', renderCanvas);
         model.on('change:_points_data', renderCanvas);
+        model.on('change:annotation_scope', renderCanvas);
         model.on('change:roi_color', renderCanvas);
         model.on('change:polygon_color', renderCanvas);
         model.on('change:point_color', renderCanvas);
