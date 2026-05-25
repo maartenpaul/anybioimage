@@ -7,12 +7,13 @@ app = marimo.App(width="full")
 @app.cell
 def _():
     import marimo as mo
+    import pandas as pd
     from bioio import BioImage
     import bioio_tifffile
     import bioio_ome_zarr
     from anybioimage import BioImageViewer
 
-    return BioImage, BioImageViewer, bioio_ome_zarr, mo
+    return BioImage, BioImageViewer, bioio_ome_zarr, mo, pd
 
 
 @app.cell
