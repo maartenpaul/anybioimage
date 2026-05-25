@@ -5,7 +5,7 @@ dependencies:
   - python=3.12
   - pip
   - pip:
-    - anybioimage[complete]
+    - anybioimage
     - bioio
     - bioio-tifffile
     - bioio-ome-zarr
