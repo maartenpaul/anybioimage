@@ -3,6 +3,7 @@
 [![PyPI version](https://img.shields.io/pypi/v/anybioimage)](https://pypi.org/project/anybioimage/)
 [![Python versions](https://img.shields.io/pypi/pyversions/anybioimage)](https://pypi.org/project/anybioimage/)
 [![Open in molab](https://molab.marimo.io/molab-shield.svg)](https://molab.marimo.io/github/maartenpaul/anybioimage/blob/main/examples/anybioimage_notebook_demo.py)
+[![Binder](https://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/maartenpaul/anybioimage/HEAD?urlpath=%2Fdoc%2Ftree%2Fexamples%2Fjupyter%2Fanybioimage_example.ipynb)
 
 Interactive bioimage viewer widget for Jupyter and marimo notebooks. Built on [anywidget](https://anywidget.dev), it supports multi-dimensional images, multi-channel composites, mask overlays, annotation tools, and HCS plate navigation.
 
@@ -23,6 +24,8 @@ uv pip install "anybioimage[complete]"
 ## Try anybioimage online
 If you want to try `anybioimage` without any installation you can make use of [molab](https://molab.marimo.io) . Open the demo notebook, login to fork the notebook and run anybioimage directly in your browser.   
 [anybioimage_notebook_demo.py](https://molab.marimo.io/github/maartenpaul/anybioimage/blob/main/examples/anybioimage_notebook_demo.py)
+
+Or run it in jupyterlab on mybinder.org: [anybioimage_example.ipynb](https://mybinder.org/v2/gh/maartenpaul/anybioimage/HEAD?urlpath=%2Fdoc%2Ftree%2Fexamples%2Fjupyter%2Fanybioimage_example.ipynb)
 
 ## Quick Start
 
