@@ -2,7 +2,7 @@
 
 [![PyPI version](https://img.shields.io/pypi/v/anybioimage)](https://pypi.org/project/anybioimage/)
 [![Python versions](https://img.shields.io/pypi/pyversions/anybioimage)](https://pypi.org/project/anybioimage/)
-
+[![Open in molab](https://molab.marimo.io/molab-shield.svg)](https://molab.marimo.io/github/maartenpaul/anybioimage/blob/main/examples/anybioimage_notebook_demo.py)
 
 Interactive bioimage viewer widget for Jupyter and marimo notebooks. Built on [anywidget](https://anywidget.dev), it supports multi-dimensional images, multi-channel composites, mask overlays, annotation tools, and HCS plate navigation.
 
@@ -19,6 +19,10 @@ uv pip install "anybioimage[all]"
 # With SAM support (Python 3.10–3.12, requires PyTorch)
 uv pip install "anybioimage[complete]"
 ```
+
+## Try anybioimage online
+If you want to try `anybioimage` without any installation you can make use of [molab](https://molab.marimo.io) . Open the demo notebook, login to fork the notebook and run anybioimage directly in your browser.   
+[anybioimage_notebook_demo.py](https://molab.marimo.io/github/maartenpaul/anybioimage/blob/main/examples/anybioimage_notebook_demo.py)
 
 ## Quick Start
 
