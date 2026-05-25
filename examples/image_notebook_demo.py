@@ -1,3 +1,16 @@
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#     "marimo",
+#     "anybioimage",
+#     "bioio",
+#     "bioio-tifffile",
+#     "bioio-ome-zarr",
+#     "bioio-ome-tiff",
+#     "bioio-bioformats",
+#     "pandas",
+# ]
+# ///
 import marimo
 
 __generated_with = "0.23.8"
