@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 import anywidget
 import traitlets
 
-from .backends import get_backend_esm
+from .backends import KNOWN_BACKENDS, get_backend_esm
 from .mixins import (
     AnnotationsMixin,
     ImageLoadingMixin,
@@ -163,7 +163,22 @@ class BioImageViewer(
     _histogram_request = traitlets.Dict(allow_none=True).tag(sync=True)
     _histogram_data = traitlets.Dict(allow_none=True).tag(sync=True)
 
-    def __init__(self, **kwargs):
+    # --- Viv backend (opt-in) ---
+    _render_backend = traitlets.Unicode("canvas2d").tag(sync=True)
+    # {url, headers} for browser-direct OME-Zarr fetch; {} = no zarr image
+    _zarr_source = traitlets.Dict({}).tag(sync=True)
+    # Flipped True by the Viv frontend once the first frame has props+viewState
+    _render_ready = traitlets.Bool(False).tag(sync=True)
+
+    def __init__(self, *, render_backend: str = "canvas2d", **kwargs):
+        if render_backend not in KNOWN_BACKENDS:
+            raise ValueError(
+                f"Unknown render_backend {render_backend!r}; expected one of {KNOWN_BACKENDS}"
+            )
+        if render_backend != "canvas2d":
+            # Must be set BEFORE super().__init__ — anywidget snapshots _esm
+            # from the instance during widget construction.
+            self._esm = get_backend_esm(render_backend)
         super().__init__(**kwargs)
         self._mask_arrays = {}  # Store raw label arrays by mask id
         self._mask_caches = {}  # Cache rendered versions by mask id
@@ -206,12 +221,18 @@ class BioImageViewer(
         self.observe(self._on_auto_contrast_request, names=["_auto_contrast_request"])
         self.observe(self._on_histogram_request, names=["_histogram_request"])
         self.observe(self._on_jpeg_toggle, names=["use_jpeg_tiles"])
+        self._render_backend = render_backend
 
     def close(self):
-        """Clean up resources when the widget is closed."""
-        if self._precompute_event is not None:
+        """Clean up resources when the widget is closed.
+
+        Uses getattr guards: __del__ may invoke close() on an instance whose
+        __init__ raised before these attributes were assigned (e.g. an
+        unknown render_backend).
+        """
+        if getattr(self, "_precompute_event", None) is not None:
             self._precompute_event.set()
-        if self._prefetch_executor is not None:
+        if getattr(self, "_prefetch_executor", None) is not None:
             self._prefetch_executor.shutdown(wait=False)
         super().close()
 
