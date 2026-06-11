@@ -2,8 +2,6 @@
 
 import logging
 
-import zarr
-
 logger = logging.getLogger(__name__)
 
 
@@ -36,6 +34,8 @@ class PlateLoadingMixin:
         Args:
             path: Path to the OME-Zarr plate directory (local or remote).
         """
+        import zarr
+
         store = zarr.open_group(path, mode="r")
         attrs = dict(store.attrs)
 
