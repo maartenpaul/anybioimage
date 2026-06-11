@@ -80,6 +80,33 @@ The main widget class with these capabilities:
 - `enable_sam(model_type)` - Enable SAM segmentation
 - `rois_df`, `polygons_df`, `points_df` - Access annotation data as DataFrames
 
+### Rendering backends
+
+`BioImageViewer(render_backend="viv")` opts in to the Viv backend; default `canvas2d` is unchanged.
+
+**Viv** handles URL-schemed remote OME-Zarr only — strings matching one of
+`http://`, `https://`, `s3://`, `gs://`, `file://` **and** ending in `.zarr` or `.ome.zarr`
+(query strings and trailing slashes are stripped before the suffix check).
+Everything else silently falls back to Canvas2D (one `INFO` log line).
+
+**Traitlets added for the viv backend:**
+- `_render_backend` (`Unicode`, synced) — `"canvas2d"` or `"viv"`
+- `_zarr_source` (`Dict`, synced) — `{url: str, headers: dict}`; set by `_set_zarr_url()` in `mixins/image_loading.py`; cleared on non-URL `set_image` calls
+- `_render_ready` (`Bool`, synced) — flips `True` when Viv has rendered the first frame; re-armed `False` on each new zarr source
+
+**Architecture:**
+- Canvas2D UI lives in `anybioimage/frontend/viewer/src/canvas2d-chrome.js` and is served raw by `backends/canvas2d.py` — no build step needed.
+- The viv bundle (`anybioimage/frontend/viewer/dist/viewer-bundle.js`) is built from `src/entry.js` via esbuild; it compiles the chrome IN and overlays a Viv/deck.gl WebGL2 canvas inside `.canvas-wrapper`.
+- **Any edit to `canvas2d-chrome.js` or `src/**` requires rebuilding the bundle:**
+  ```bash
+  cd anybioimage/frontend/viewer && npm install && npm run build
+  ```
+  Commit `dist/viewer-bundle.js` afterwards — CI `bundle.yml` enforces freshness.
+
+**Python seam:**
+- `set_image(url, headers=None)` → `_set_zarr_url()` (metadata-only, no precompute) in `mixins/image_loading.py`
+- Plates: `_load_plate_image()` in `mixins/plate_loading.py` updates `_zarr_source` subpath browser-side for remote plates on the viv backend
+
 ### Annotation Tools
 
 - **Pan** - Navigate the image

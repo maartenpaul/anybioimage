@@ -153,6 +153,31 @@ Requires `uv pip install "anybioimage[sam]"` (Python 3.10–3.12).
 
 ![](images/image_004.gif)
 
+## Rendering backends
+
+| Backend | Default | Best for |
+|---|---|---|
+| `canvas2d` | ✅ | Local arrays, BioImage/TIFF/CZI/ND2, full annotation & SAM toolset |
+| `viv` | opt-in | Remote OME-Zarr URLs — browser-direct chunk fetch, GPU compositing |
+
+```python
+# Opt in to the Viv backend for remote OME-Zarr:
+viewer = BioImageViewer(render_backend="viv")
+viewer.set_image("https://example.com/data.ome.zarr")
+viewer.set_plate("https://example.com/plate.zarr")  # well/FOV switching stays browser-side
+```
+
+Non-zarr inputs on the `viv` backend fall back to Canvas2D automatically (one info log).
+Alpha limitations on Viv-rendered images: annotation/SAM tools, brightness/contrast
+sliders, histograms, and the toolbar Reset-view button are inactive (use per-channel
+min/max for contrast); they remain fully functional on the Canvas2D backend.
+Set `render_backend="canvas2d"` (default) to retain the full annotation and SAM toolset.
+
+### Attribution
+
+The Viv backend builds on [Viv](https://github.com/hms-dbmi/viv) (MIT),
+[deck.gl](https://deck.gl) (MIT), and Viv's zarr loader (zarr.js lineage, MIT).
+
 ## Optional dependencies
 
 | Extra | Installs | Use case |
