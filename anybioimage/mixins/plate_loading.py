@@ -1,6 +1,10 @@
 """HCS OME-Zarr plate loading mixin for BioImageViewer."""
 
+import logging
+
 import zarr
+
+logger = logging.getLogger(__name__)
 
 
 class PlateLoadingMixin:
@@ -142,6 +146,10 @@ class PlateLoadingMixin:
     def _load_plate_image(self, fov):
         """Load the image for the current well and given FOV.
 
+        On the viv backend with a remote (http/https) plate, hand the FOV's
+        zarr subpath straight to the browser via _zarr_source — no Python
+        chunk reload. Everything else uses the bioio path, unchanged.
+
         Args:
             fov: FOV path within the well (e.g., "0").
         """
@@ -150,6 +158,20 @@ class PlateLoadingMixin:
 
         image_path = f"{self._plate_path}/{self._current_well_path}/{fov}"
 
+        if (
+            getattr(self, "_render_backend", "canvas2d") == "viv"
+            and str(self._plate_path).lower().startswith(("http://", "https://"))
+        ):
+            try:
+                self._set_zarr_url(image_path, {})
+                return
+            except Exception as e:
+                logger.info("Viv plate FOV load failed (%s); falling back to bioio", e)
+
+        self._load_plate_image_bioio(image_path)
+
+    def _load_plate_image_bioio(self, image_path):
+        """Original bioio plate-image load (Canvas2D path)."""
         try:
             import bioio_ome_zarr
             from bioio import BioImage
