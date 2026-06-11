@@ -137,3 +137,23 @@ def test_unusable_metadata_falls_back_to_bioio(monkeypatch, _fake_viv_esm):
     assert called["url"] == "https://example.org/plain.zarr"
     assert v._zarr_source == {}
     assert v.dim_t == 1  # untouched defaults, not a half-populated viewer
+
+
+def test_render_ready_rearms_on_each_new_zarr_source(viv_viewer):
+    # The frontend flips _render_ready True once a frame paints; loading a new
+    # image must reset it so fixtures block on the NEW image, not a stale True.
+    viv_viewer.set_image("https://example.org/a.ome.zarr")
+    viv_viewer._render_ready = True  # simulate the frontend having painted A
+    viv_viewer.set_image("https://example.org/b.ome.zarr")
+    assert viv_viewer._render_ready is False
+    assert viv_viewer._zarr_source["url"] == "https://example.org/b.ome.zarr"
+
+
+def test_numpy_then_zarr_restores_zarr_source(viv_viewer):
+    # Reverse of test_switching_zarr_to_numpy_clears_source: a numpy load clears
+    # _zarr_source, and a subsequent zarr load must repopulate it.
+    viv_viewer.set_image(np.zeros((16, 16), dtype=np.uint8))
+    assert viv_viewer._zarr_source == {}
+    viv_viewer.set_image("https://example.org/img.ome.zarr")
+    assert viv_viewer._zarr_source["url"] == "https://example.org/img.ome.zarr"
+    assert viv_viewer.dim_t == 10  # dims repopulated from metadata

@@ -34,6 +34,12 @@ def _looks_like_zarr_url(s) -> bool:
 
     Filesystem paths ending in `.zarr` are NOT URLs — the browser cannot
     fetch them. Those go through the bioio path instead.
+
+    Note: `s3://`/`gs://`/`file://` are recognised here, but the Python-side
+    metadata probe (`_fetch_zarr_ome_metadata`) only speaks http(s); a viv
+    load of those schemes raises in the probe and falls back to bioio. The
+    browser loader may still handle http(s)-proxied stores. Practically,
+    remote OME-Zarr over http(s) is the supported viv path today.
     """
     if not isinstance(s, str):
         return False
