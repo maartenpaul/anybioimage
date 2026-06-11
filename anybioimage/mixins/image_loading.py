@@ -44,6 +44,101 @@ def _looks_like_zarr_url(s) -> bool:
     return stripped.endswith(_ZARR_SUFFIXES)
 
 
+def _channel_settings_from_omero(ome: dict, dim_c: int, dtype=None) -> list[dict]:
+    """Build channel_settings dicts from an OME-Zarr omero block (or defaults).
+
+    Produces a superset of the Canvas2D schema: the chrome reads
+    {name,color,visible,min,max,data_min,data_max}; the Viv layer additionally
+    reads {index,color_kind,lut,gamma}. min/max are normalized to [0,1] of the
+    data range, matching the Canvas2D convention.
+    """
+    dtype_min = dtype_max = None
+    if dtype is not None and np.issubdtype(np.dtype(dtype), np.integer):
+        info = np.iinfo(np.dtype(dtype))
+        dtype_min, dtype_max = float(info.min), float(info.max)
+    omero = ome.get("omero") or {}
+    omero_channels = omero.get("channels") or []
+    default_palette = ["#ff0000", "#00ff00", "#0000ff", "#ff00ff", "#00ffff", "#ffff00"]
+    out = []
+    for i in range(dim_c):
+        src = omero_channels[i] if i < len(omero_channels) else {}
+        window = src.get("window") or {}
+        omero_min = float(window.get("min", 0.0))
+        omero_max = float(window.get("max", 65535.0))
+        if dtype_min is not None:
+            data_min, data_max = dtype_min, dtype_max
+        else:
+            data_min, data_max = omero_min, omero_max
+        start = float(window.get("start", omero_min))
+        end = float(window.get("end", omero_max))
+        # Normalize against the same data range stored in the dict, so the
+        # frontend's reconstruction data_min + v*(data_max-data_min) lands on
+        # the OMERO start/end intensities exactly.
+        span = max(data_max - data_min, 1.0)
+        vmin = max(0.0, (start - data_min) / span)
+        vmax = min(1.0, (end - data_min) / span)
+        color_hex = src.get("color")
+        if color_hex:
+            color = color_hex if color_hex.startswith("#") else f"#{color_hex}"
+        else:
+            color = default_palette[i % len(default_palette)]
+        out.append({
+            "index": i,
+            "name": src.get("label", f"Ch {i}"),
+            "visible": True,
+            "color_kind": "solid",
+            "color": color,
+            "lut": "viridis",
+            "data_min": data_min,
+            "data_max": data_max,
+            "min": vmin,
+            "max": vmax,
+            "gamma": 1.0,
+        })
+    return out
+
+
+def _fetch_zarr_ome_metadata(url: str, headers: dict):
+    """Fetch `.zattrs` + level-0 `.zarray` from a zarr root URL.
+
+    Returns ``(zattrs, axes, shape, dtype_str)`` where ``axes`` is the
+    multiscales axis-name list (e.g. ``["t","c","z","y","x"]``), ``shape`` is
+    the level-0 array shape in the same order, and ``dtype_str`` a numpy dtype
+    name (e.g. ``"uint16"``). Raises on network error / unparseable JSON.
+    """
+    import json
+    import urllib.request
+
+    base = url.rstrip("/")
+
+    def _get_json(rel: str):
+        req = urllib.request.Request(f"{base}/{rel}", headers=headers or {})
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            return json.loads(resp.read().decode())
+
+    zattrs = _get_json(".zattrs")
+    multiscales = zattrs.get("multiscales") or []
+    axes, shape, dtype_raw = [], [], "<u2"
+    if multiscales:
+        axes = [a.get("name", "") for a in (multiscales[0].get("axes") or [])]
+        datasets = multiscales[0].get("datasets") or []
+        if datasets and datasets[0].get("path") is not None:
+            try:
+                zarray = _get_json(f"{datasets[0]['path']}/.zarray")
+                shape = list(zarray.get("shape", []))
+                dtype_raw = zarray.get("dtype", "<u2")
+            except Exception:
+                pass
+    if not axes and shape:
+        # Pre-0.4 stores without an axes block: assume trailing-YX TCZYX order.
+        axes = ["t", "c", "z", "y", "x"][-len(shape):]
+    try:
+        dtype_str = str(np.dtype(dtype_raw))
+    except Exception:
+        dtype_str = "uint16"
+    return zattrs, axes, shape, dtype_str
+
+
 def _thumbnail(arr: np.ndarray, max_size: int = _THUMBNAIL_MAX) -> np.ndarray:
     """Downsample array to fit within max_size using nearest-neighbor sampling."""
     h, w = arr.shape[:2]
@@ -85,18 +180,82 @@ class ImageLoadingMixin:
         - current_scene: Current scene name (traitlet)
     """
 
-    def set_image(self, data):
-        """Set the base image from a numpy array or BioImage object.
+    def set_image(self, data, headers: dict | None = None):
+        """Set the base image from a numpy array, BioImage object, or
+        (URL-schemed) OME-Zarr URL string.
 
         Args:
-            data: Either a numpy array or a BioImage object.
-                  If BioImage, enables lazy loading for 5D data.
+            data: numpy array, BioImage, or ``http(s)/s3/gs/file`` URL ending
+                  in ``.zarr`` / ``.ome.zarr``.
+            headers: optional HTTP headers for zarr URLs (auth etc.).
         """
-        # Check if this is a BioImage object
+        if _looks_like_zarr_url(data):
+            if getattr(self, "_render_backend", "canvas2d") == "viv":
+                try:
+                    self._set_zarr_url(data, headers or {})
+                    return
+                except Exception as e:
+                    logger.info(
+                        "Viv zarr metadata load failed (%s); falling back to Canvas2D", e
+                    )
+            self._set_zarr_url_canvas2d(data)
+            return
+        if getattr(self, "_render_backend", "canvas2d") == "viv":
+            logger.info("Non-zarr input on viv backend; rendering via Canvas2D pipeline.")
+        # --- existing main dispatch, unchanged ---
         if hasattr(data, "dims") and hasattr(data, "dask_data"):
             self._set_bioimage(data)
         else:
             self._set_numpy_image(data)
+
+    def _set_zarr_url(self, url: str, headers: dict) -> None:
+        """Viv path: fetch OME metadata once, populate dim/channel traitlets,
+        and hand chunk fetching + rendering to the browser via _zarr_source.
+        No precompute, no composites, no PNG encoding."""
+        url = url.rstrip("/")
+        zattrs, axes, shape, dtype_str = _fetch_zarr_ome_metadata(url, headers or {})
+        if not axes or not shape:
+            raise ValueError(
+                f"No usable multiscales axes/shape metadata at {url}; "
+                "not renderable via browser-direct zarr"
+            )
+
+        def _dim(name: str) -> int:
+            if name in axes:
+                i = axes.index(name)
+                if i < len(shape):
+                    return int(shape[i])
+            return 1
+
+        dim_c = _dim("c")
+        channels = _channel_settings_from_omero(zattrs, dim_c, dtype_str)
+
+        # Cancel any running Canvas2D precompute (same idiom as _start_precompute).
+        if getattr(self, "_precompute_event", None) is not None:
+            self._precompute_event.set()
+        self._precompute_future = None
+        self._full_array = None
+        self._bioimage = None
+
+        with self.hold_trait_notifications():
+            self.dim_t = _dim("t")
+            self.dim_c = dim_c
+            self.dim_z = _dim("z")
+            self.height = _dim("y")
+            self.width = _dim("x")
+            self.current_t = 0
+            self.current_z = 0
+            self._channel_settings = channels
+            self.image_data = ""
+        self._zarr_source = {"url": url, "headers": headers or {}}
+        logger.info("Viv backend: browser-direct zarr source set to %s", url)
+
+    def _set_zarr_url_canvas2d(self, url: str) -> None:
+        """Canvas2D path for zarr URLs: load through bioio as before."""
+        import bioio_ome_zarr
+        from bioio import BioImage
+
+        self._set_bioimage(BioImage(url, reader=bioio_ome_zarr.Reader))
 
     def _set_numpy_image(self, data: np.ndarray):
         """Set the base image from a numpy array (any shape, up to 5D).
@@ -104,6 +263,8 @@ class ImageLoadingMixin:
         Shape inference: 2D→(1,1,1,Y,X); 3D with last dim ≤4 → (1,C,1,Y,X) treating as HWC;
         3D otherwise → (1,C,1,Y,X) treating as CYX; 4D → (1,C,Z,Y,X); 5D → TCZYX.
         """
+        if getattr(self, "_zarr_source", None):
+            self._zarr_source = {}
         if not isinstance(data, np.ndarray):
             data = np.asarray(data)
 
@@ -177,6 +338,8 @@ class ImageLoadingMixin:
         Args:
             img: A BioImage object from bioio
         """
+        if getattr(self, "_zarr_source", None):
+            self._zarr_source = {}
         self._bioimage = img
         self._full_array = None
 
@@ -772,6 +935,8 @@ class ImageLoadingMixin:
         navigation can outpace the background precompute thread.
         For in-RAM datasets, ±1 on both axes is sufficient (precompute covers the rest).
         """
+        if getattr(self, "_zarr_source", {}).get("url"):
+            return  # Viv owns rendering for zarr-URL images
         if self._bioimage is None:
             return
 
@@ -817,6 +982,8 @@ class ImageLoadingMixin:
 
     def _update_slice(self):
         """Update the displayed slice based on current T, Z positions and channel settings."""
+        if getattr(self, "_zarr_source", {}).get("url"):
+            return  # Viv owns rendering for zarr-URL images
         if self._bioimage is None and self._full_array is None:
             return
 
