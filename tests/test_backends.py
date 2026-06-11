@@ -28,3 +28,16 @@ def test_viv_loader_missing_bundle_or_bundle():
         assert "npm" in str(e)
     else:
         assert "render" in esm
+
+
+def test_viv_esm_is_committed_bundle():
+    from pathlib import Path
+
+    import anybioimage
+    from anybioimage.backends import viv
+
+    bundle = (
+        Path(anybioimage.__file__).parent / "frontend" / "viewer" / "dist" / "viewer-bundle.js"
+    )
+    assert bundle.exists(), "bundle must be committed"
+    assert viv.get_esm() == bundle.read_text(encoding="utf-8")
