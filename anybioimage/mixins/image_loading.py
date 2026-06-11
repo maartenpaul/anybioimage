@@ -247,6 +247,9 @@ class ImageLoadingMixin:
             self.current_z = 0
             self._channel_settings = channels
             self.image_data = ""
+            # Re-arm the readiness flag so fixtures can block on the NEW image
+            # rendering, not a stale True from a previous load.
+            self._render_ready = False
         self._zarr_source = {"url": url, "headers": headers or {}}
         logger.info("Viv backend: browser-direct zarr source set to %s", url)
 
