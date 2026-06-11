@@ -23,6 +23,26 @@ _EAGER_LOAD_BYTES = 2 * 1024 ** 3  # 2 GB
 
 _THUMBNAIL_MAX = 512  # Max dimension for tile-mode thumbnail (used as baseImage fallback)
 
+_ZARR_SUFFIXES = (".zarr", ".ome.zarr")
+
+_URL_SCHEMES = ("http://", "https://", "s3://", "gs://", "file://")
+
+
+def _looks_like_zarr_url(s) -> bool:
+    """Return True only for strings that are BOTH a URL (with an explicit
+    scheme the browser can fetch from) AND point at a .zarr path.
+
+    Filesystem paths ending in `.zarr` are NOT URLs — the browser cannot
+    fetch them. Those go through the bioio path instead.
+    """
+    if not isinstance(s, str):
+        return False
+    lower = s.lower()
+    if not lower.startswith(_URL_SCHEMES):
+        return False
+    stripped = s.split("?", 1)[0].split("#", 1)[0].rstrip("/").lower()
+    return stripped.endswith(_ZARR_SUFFIXES)
+
 
 def _thumbnail(arr: np.ndarray, max_size: int = _THUMBNAIL_MAX) -> np.ndarray:
     """Downsample array to fit within max_size using nearest-neighbor sampling."""
