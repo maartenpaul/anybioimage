@@ -9,6 +9,7 @@ import { MultiscaleImageLayer, getDefaultInitialViewState } from '@hms-dbmi/viv'
 import { openOmeZarr } from './pixel-sources/zarr-source.js';
 import { buildImageLayerProps } from './layers/buildImageLayer.js';
 import { useModelTrait } from '../model/useModelTrait.js';
+import { classifyLoadError } from '../util/classifyLoadError.js';
 
 function useContainerSize(ref, fallback = { width: 800, height: 600 }) {
   const [size, setSize] = useState(fallback);
@@ -52,7 +53,7 @@ export function VivCanvas({ model }) {
         const { sources: srcs } = await openOmeZarr(zarrSource.url, zarrSource.headers || {});
         if (!cancelled) setSources(srcs);
       } catch (e) {
-        if (!cancelled) { setError(String(e)); setSources(null); }
+        if (!cancelled) { setError(classifyLoadError(e, zarrSource.url)); setSources(null); }
       }
     }
     run();
@@ -92,7 +93,12 @@ export function VivCanvas({ model }) {
 
   if (!zarrSource?.url) return null;
   if (error) {
-    return <div style={{ color: '#b00', padding: 12 }}>Failed to load image: {error}</div>;
+    return (
+      <div style={{ color: '#b00', padding: 12 }}>
+        <strong>{error.title}</strong>
+        <pre style={{ whiteSpace: 'pre-wrap', margin: '8px 0 0', font: 'inherit' }}>{error.detail}</pre>
+      </div>
+    );
   }
 
   return (
