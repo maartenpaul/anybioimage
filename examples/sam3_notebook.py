@@ -71,12 +71,33 @@ def _(mo):
 def _(BioImage, bioio_tifffile, find_asset, np):
     img = BioImage(find_asset("image.tif"), reader=bioio_tifffile.Reader)
 
-    # Reduce to a single 2D plane (T=0, Z=0, C=0) and build an 8-bit RGB image.
-    # SAM 3 expects a 3-channel, natural-image-style input.
-    plane = np.asarray(img.data)[0, 0, 0]  # YX
-    lo, hi = np.percentile(plane, (1, 99))
-    norm = np.clip((plane.astype(np.float32) - lo) / max(hi - lo, 1e-6), 0, 1)
-    rgb = (np.stack([norm] * 3, axis=-1) * 255).astype(np.uint8)
+    def _norm8(chan):
+        lo, hi = np.percentile(chan, (1, 99))
+        scaled = np.clip((chan.astype(np.float32) - lo) / max(hi - lo, 1e-6), 0, 1)
+        return (scaled * 255).astype(np.uint8)
+
+    # bioio .data is TCZYX (5D) or TCZYXS (6D, e.g. an RGB TIFF with a samples axis).
+    # Build a contiguous (H, W, 3) uint8 image for SAM 3 regardless of the layout.
+    arr = np.asarray(img.data)
+    if arr.ndim == 6:  # TCZYXS -> (H, W, S)
+        plane = arr[0, 0, 0]
+    elif arr.ndim == 5:  # TCZYX -> (H, W, C)
+        plane = np.moveaxis(arr[0, :, 0], 0, -1)
+    else:
+        plane = np.squeeze(arr)
+        if plane.ndim == 2:
+            plane = plane[..., None]
+
+    n_ch = plane.shape[-1]
+    if n_ch == 1:  # grayscale -> replicate to RGB
+        gray = _norm8(plane[..., 0])
+        rgb = np.dstack([gray, gray, gray])
+    else:  # take the first 3 channels as R, G, B
+        chans = [_norm8(plane[..., i]) for i in range(min(3, n_ch))]
+        while len(chans) < 3:
+            chans.append(chans[-1])
+        rgb = np.dstack(chans)
+    rgb = np.ascontiguousarray(rgb, dtype=np.uint8)
     return img, rgb
 
 
