@@ -169,7 +169,11 @@ def _(conf, find_asset, mo, np, os, prompt, rgb, run, viewer):
                 labels[mask_bool & (labels == 0)] = n
 
         if n:
-            viewer.add_mask(labels, name=f"SAM3: {prompt.value}", opacity=0.5)
+            layer_name = f"SAM3: {prompt.value}"
+            # Replace an earlier run of the same prompt instead of stacking duplicates.
+            for existing in [m for m in viewer._masks_data if m["name"] == layer_name]:
+                viewer.remove_mask(existing["id"])
+            viewer.add_mask(labels, name=layer_name, opacity=0.5)
         result_view = mo.md(
             f"Segmented **{n}** instance(s) of *'{prompt.value}'* on `{device}`. "
             "The overlay appears in the viewer above."
