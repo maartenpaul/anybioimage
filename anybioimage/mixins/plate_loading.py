@@ -28,24 +28,18 @@ class PlateLoadingMixin:
         - current_fov: Current FOV name (traitlet)
     """
 
-    def set_plate(self, path):
+    def set_plate(self, path, storage_options: dict | None = None):
         """Load an HCS OME-Zarr plate and display the first well/FOV.
 
         Args:
             path: Path to the OME-Zarr plate directory (local or remote).
+            storage_options: fsspec options (e.g. credentials, ``anon``) for
+                remote stores (``s3://``, ``gs://``).
         """
-        import zarr
+        from .. import ngff
 
-        store = zarr.open_group(path, mode="r")
-        attrs = dict(store.attrs)
-
-        # Support both v0.4 (plate at root) and v0.5 (plate under "ome")
-        if "plate" in attrs:
-            plate_meta = attrs["plate"]
-        elif "ome" in attrs and "plate" in attrs["ome"]:
-            plate_meta = attrs["ome"]["plate"]
-        else:
-            raise ValueError(f"No HCS plate metadata found in {path}")
+        store = ngff.open_group(path, storage_options)
+        plate_meta = ngff.plate_layout(store)   # raises ValueError if not a plate
 
         self._plate_path = str(path)
         self._plate_store = store
@@ -101,15 +95,10 @@ class PlateLoadingMixin:
 
         # Read well metadata to get FOV list
         well_group = self._plate_store[well_path]
-        well_attrs = dict(well_group.attrs)
+        from .. import ngff
 
-        if "well" in well_attrs:
-            well_meta = well_attrs["well"]
-        elif "ome" in well_attrs and "well" in well_attrs["ome"]:
-            well_meta = well_attrs["ome"]["well"]
-        else:
-            # Fallback: list subgroups as FOVs
-            well_meta = {"images": []}
+        _, well_ome = ngff.read_ome_attrs(well_group)
+        well_meta = well_ome.get("well") or {"images": []}
 
         images = well_meta.get("images", [])
         fov_paths = [img["path"] for img in images]
@@ -146,9 +135,10 @@ class PlateLoadingMixin:
     def _load_plate_image(self, fov):
         """Load the image for the current well and given FOV.
 
-        On the viv backend with a remote (http/https) plate, hand the FOV's
-        zarr subpath straight to the browser via _zarr_source — no Python
-        chunk reload. Everything else uses the bioio path, unchanged.
+        viv backend: http(s) plates hand the FOV subpath to the browser
+        (``_set_zarr_url``); every other plate the kernel can open goes through
+        the chunk bridge (``_attach_bridge``). Failures fall back to bioio.
+        Canvas2D backend: bioio, unchanged.
 
         Args:
             fov: FOV path within the well (e.g., "0").
@@ -158,12 +148,14 @@ class PlateLoadingMixin:
 
         image_path = f"{self._plate_path}/{self._current_well_path}/{fov}"
 
-        if (
-            getattr(self, "_render_backend", "canvas2d") == "viv"
-            and str(self._plate_path).lower().startswith(("http://", "https://"))
-        ):
+        if getattr(self, "_render_backend", "canvas2d") == "viv":
             try:
-                self._set_zarr_url(image_path, {})
+                if str(self._plate_path).lower().startswith(("http://", "https://")):
+                    self._set_zarr_url(image_path, {})
+                else:
+                    from .. import ngff
+
+                    self._attach_bridge(ngff.open_image(self._plate_store[f"{self._current_well_path}/{fov}"]))
                 return
             except Exception as e:
                 logger.info("Viv plate FOV load failed (%s); falling back to bioio", e)
