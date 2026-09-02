@@ -90,6 +90,13 @@ The main widget class with these capabilities:
 - `"url"` — `http(s)://…zarr` strings: browser-direct chunk fetch via Viv's `loadOmeZarr` (zarr v2 only; the server must allow CORS).
 - `"bridge"` — local paths (`str`/`Path`), `file://`, `s3://`, `gs://` and `zarr.Group` inputs: the kernel opens the store with zarr-python 3 (v2 + v3, NGFF v0.4/v0.5) and serves per-level tiles over `model.send` (`anybioimage/mixins/zarr_bridge.py` ↔ `src/render/pixel-sources/anywidget-source.js` + `bridge-source.js`). Reads whole zarr chunk blocks once and caches every tile they contain in a byte-budgeted LRU (`viewer.bridge_cache_bytes`, default 256 MB); sibling requests for one block are de-duplicated in flight. No full-plane loads, no RAM cap.
 
+**marimo threading gotcha:** marimo's runtime context is a `threading.local`, so a widget
+`self.send()` from a plain worker thread is silently dropped (`MarimoComm._broadcast` swallows
+`ContextNotInitializedError`). The bridge spawns its workers via `make_bridge_thread()` in
+`mixins/zarr_bridge.py` — a `marimo.Thread` when a runtime context is installed on the spawning
+thread, a plain daemon thread otherwise — and spawns them lazily from `_on_bridge_msg` (the kernel
+thread). Any future background thread that must reach the frontend needs the same treatment.
+
 Everything else (numpy, BioImage, TIFF/CZI paths) silently falls back to Canvas2D (one `INFO` log line). `set_image(..., storage_options=...)` / `set_plate(..., storage_options=...)` pass fsspec options (credentials, `anon`) for remote stores; `pip install anybioimage[remote]` adds s3fs + gcsfs.
 
 **NGFF metadata** lives in one module, `anybioimage/ngff.py` (lenient v0.4 top-level / v0.5+ `ome` block parsing, `open_image → NgffImage`, plate helpers, kernel-side http probe). Spec changes go there; per-version store fixtures are in `tests/conftest.py`.

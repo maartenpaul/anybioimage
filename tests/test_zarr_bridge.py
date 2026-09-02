@@ -353,3 +353,91 @@ def test_canvas2d_viewer_has_inert_bridge():
     _wait_sent(v, 1)
     assert v._sent[0]["ok"] is False
     v.close()
+
+
+# --- worker pool: replies must reach the frontend under marimo ---------------
+
+
+class _FakeThread(threading.Thread):
+    """Plain thread with a settable `should_exit`, like marimo.Thread exposes."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.should_exit = False
+
+
+def _fake_factory(target, name):
+    return _FakeThread(target=target, name=name, daemon=True)
+
+
+def test_bridge_workers_run_jobs_and_respawn_after_should_exit():
+    pool = zb._BridgeWorkers(2, _fake_factory)
+    done = threading.Event()
+    pool.submit(done.set)
+    assert done.wait(5)
+    first = pool.threads
+    assert len(first) == 2
+    for t in first:
+        t.should_exit = True
+    again = threading.Event()
+    pool.submit(again.set)
+    assert again.wait(5)
+    assert all(t not in first for t in pool.threads)   # pruned and replaced
+    assert len([t for t in pool.threads if t.is_alive()]) <= 2
+    pool.shutdown()
+
+
+def test_bridge_workers_run_concurrently():
+    pool = zb._BridgeWorkers(4, _fake_factory)
+    started, release = threading.Barrier(4, timeout=5), threading.Event()
+
+    def job():
+        started.wait()
+        release.wait(5)
+
+    for _ in range(4):
+        pool.submit(job)
+    started.wait(5)          # raises BrokenBarrierError unless 4 run at once
+    release.set()
+    pool.shutdown()
+
+
+def test_bridge_workers_shutdown_stops_threads():
+    pool = zb._BridgeWorkers(2, _fake_factory)
+    pool.submit(lambda: None)
+    threads = pool.threads
+    pool.shutdown()
+    for t in threads:
+        t.join(timeout=5)
+    assert not any(t.is_alive() for t in threads)
+    pool.submit(lambda: None)          # no-op after shutdown
+    assert pool.threads == threads
+
+
+def test_make_bridge_thread_is_plain_without_marimo_context():
+    t = zb.make_bridge_thread(lambda: None, "x")
+    assert type(t) is threading.Thread and t.daemon
+
+
+def test_make_bridge_thread_uses_marimo_thread_when_context_installed(monkeypatch):
+    import marimo
+    from marimo._runtime.context import types as ctx_types
+
+    class _RecordingThread(threading.Thread):
+        pass
+
+    monkeypatch.setattr(ctx_types, "runtime_context_installed", lambda: True)
+    monkeypatch.setattr(marimo, "Thread", _RecordingThread)
+    assert type(zb.make_bridge_thread(lambda: None, "x")) is _RecordingThread
+
+
+def test_make_bridge_thread_falls_back_when_marimo_thread_raises(monkeypatch):
+    import marimo
+    from marimo._runtime.context import types as ctx_types
+
+    def boom(*a, **k):
+        raise RuntimeError("Unsupported stream type")
+
+    monkeypatch.setattr(ctx_types, "runtime_context_installed", lambda: True)
+    monkeypatch.setattr(marimo, "Thread", boom)
+    assert type(zb.make_bridge_thread(lambda: None, "x")) is threading.Thread

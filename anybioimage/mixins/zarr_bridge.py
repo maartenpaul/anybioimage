@@ -14,11 +14,12 @@ the byte-budgeted ``BridgeCache`` keeps them for the next requests.
 """
 from __future__ import annotations
 
+import functools
 import itertools
 import logging
+import queue
 import threading
 from collections import OrderedDict
-from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 
@@ -33,6 +34,99 @@ _SPATIAL = ("y", "x")
 
 TileKey = tuple  # cache key: (gen, level, t, c, z, ty, tx); read_tile_block emits it without gen
 TileValue = tuple  # (w, h, bytes)
+
+
+BRIDGE_WORKERS = 4
+
+
+def make_bridge_thread(target, name: str) -> threading.Thread:
+    """A daemon thread that can talk to the frontend from wherever we are running.
+
+    Under marimo the runtime context is a ``threading.local``: a widget message
+    sent from a plain worker thread is dropped silently (``MarimoComm._broadcast``
+    swallows ``ContextNotInitializedError``), so the browser never sees the tile.
+    ``marimo.Thread`` clones the kernel's runtime context into the new thread, so
+    replies get through — but it must be CONSTRUCTED on a thread that already has
+    a context, i.e. the kernel thread handling the message.
+
+    Falls back to a plain thread outside marimo (Jupyter's IOPub is thread-safe)
+    and if marimo refuses to clone its context here.
+    """
+    try:
+        import marimo
+        from marimo._runtime.context.types import runtime_context_installed
+
+        if runtime_context_installed():
+            thread = marimo.Thread(target=target, name=name, daemon=True)
+            logger.debug("bridge worker %s: marimo.Thread", name)
+            return thread
+    except Exception as e:  # marimo absent, or it declined to clone the context
+        logger.debug("bridge worker %s: plain thread (%s)", name, e)
+    return threading.Thread(target=target, name=name, daemon=True)
+
+
+class _BridgeWorkers:
+    """Lazily spawned pool of daemon workers draining a job queue.
+
+    Workers are spawned by ``submit`` — which runs on the kernel thread, the only
+    place ``make_bridge_thread`` can clone marimo's runtime context. A worker
+    whose ``should_exit`` flips (marimo invalidates the cell that spawned it) is
+    replaced on the next submit, and re-queues the job it was holding.
+    """
+
+    def __init__(self, n_workers: int = BRIDGE_WORKERS, thread_factory=make_bridge_thread):
+        self._n = int(n_workers)
+        self._factory = thread_factory
+        self._queue: queue.Queue = queue.Queue()
+        self._threads: list[threading.Thread] = []
+        self._lock = threading.Lock()
+        self._closed = False
+
+    def submit(self, fn) -> None:
+        if self._closed:
+            return
+        self._queue.put(fn)
+        self._ensure_workers()
+
+    def _ensure_workers(self) -> None:
+        """Prune dead/exiting workers and top the pool back up. Kernel thread only."""
+        with self._lock:
+            if self._closed:
+                return
+            self._threads = [
+                t for t in self._threads
+                if t.is_alive() and not getattr(t, "should_exit", False)
+            ]
+            missing = self._n - len(self._threads)
+            new = [self._factory(self._run, f"zarr-bridge-{i}") for i in range(missing)]
+            self._threads.extend(new)
+        for t in new:
+            t.start()
+
+    def _run(self) -> None:
+        me = threading.current_thread()
+        while True:
+            job = self._queue.get()
+            if job is None:
+                return
+            if getattr(me, "should_exit", False):
+                self._queue.put(job)  # a replacement worker will pick it up
+                return
+            try:
+                job()
+            except Exception:
+                logger.exception("bridge worker job failed")
+
+    def shutdown(self) -> None:
+        with self._lock:
+            self._closed = True
+            n = len(self._threads)
+        for _ in range(max(n, 1)):
+            self._queue.put(None)
+
+    @property
+    def threads(self) -> list[threading.Thread]:
+        return list(self._threads)
 
 
 def viv_dtype(dtype) -> np.dtype:
@@ -223,7 +317,7 @@ class ZarrBridgeMixin:
         # into the new image's cache.
         self._bridge_gen = 0
         self._bridge_cache = BridgeCache(int(getattr(self, "bridge_cache_bytes", DEFAULT_CACHE_BYTES)))
-        self._bridge_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="zarr-bridge")
+        self._bridge_workers = _BridgeWorkers()
         self._bridge_send_lock = threading.Lock()
         self._bridge_inflight: dict[tuple, threading.Event] = {}
         self._bridge_inflight_lock = threading.Lock()
@@ -231,9 +325,9 @@ class ZarrBridgeMixin:
         self.observe(self._on_bridge_cache_bytes, names=["bridge_cache_bytes"])
 
     def _close_bridge(self) -> None:
-        ex = getattr(self, "_bridge_executor", None)
-        if ex is not None:
-            ex.shutdown(wait=False, cancel_futures=True)
+        workers = getattr(self, "_bridge_workers", None)
+        if workers is not None:
+            workers.shutdown()
         self._detach_bridge()
 
     def _on_bridge_cache_bytes(self, change) -> None:
@@ -315,7 +409,7 @@ class ZarrBridgeMixin:
                 self.send({"kind": "chunk", "requestId": content.get("requestId"),
                            "ok": False, "error": "no bridged image attached"})
             return
-        self._bridge_executor.submit(self._serve_chunk, content)
+        self._bridge_workers.submit(functools.partial(self._serve_chunk, content))
 
     def _serve_chunk(self, req: dict) -> None:
         rid = req.get("requestId")

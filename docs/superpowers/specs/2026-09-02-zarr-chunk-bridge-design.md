@@ -96,22 +96,27 @@ buys 30 sibling tiles at ~1 ms each — the chunk-aware rule holds. Replies carr
 512x512 uint16 = 524288 raw bytes and decode to sane pixel values
 (level 0 tile (0,0): min 85, max 129, mean 102.3).
 
-**Browser status: not yet rendering under marimo (blocked).** In headless
-chromium against `examples/viv_local_zarr_demo.py` the Viv canvas mounts
-correctly (Canvas2D hidden, WebGL2 context live, `MultiscaleImageLayer` built
-with `selections=[{c:0,t:0,z:0}]`, `contrastLimits=[[77,299]]`, viewState
-centred on 2048²) and the frontend does issue chunk requests — but every tile
-stays unloaded and the canvas is blank. Root cause is on the marimo host side,
-not in the bridge logic: `_serve_chunk` runs on a `zarr-bridge` worker thread,
-and marimo's runtime context is a `threading.local`
-(`marimo._runtime.context.types._THREAD_LOCAL_CONTEXT`), so
-`MarimoComm._broadcast` -> `broadcast_notification` hits
-`ContextNotInitializedError`, logs `No context initialized.` at DEBUG and drops
-the reply. Kernel debug log shows the pairing directly: `Handling message for
-comm <id>` (request received) then `Sending comm message <id>` immediately
-followed by `No context initialized.` for each tile. The fix belongs in the
-bridge: reply from the kernel thread (or copy the marimo runtime context into
-the worker threads).
+**Browser status: rendering (verified 2026-09-02).** Headless chromium against
+`examples/viv_local_zarr_demo.py` under `marimo -l debug edit`: the Viv canvas
+mounts (Canvas2D hidden, WebGL2 live, 4 sliders), tiles load, and the deck.gl
+canvas shows the dataset's fluorescent puncta on a dark field (grey stddev 120,
+not flat, not byte-swapped noise). Z 0->1->2 and T 0->5 each redraw. No
+`pageerror`, no console errors, no `chunk request ... failed` in the kernel log.
+
+Getting there needed one host-side fix. marimo's runtime context is a
+`threading.local` (`marimo._runtime.context.types._THREAD_LOCAL_CONTEXT`), so a
+reply sent from a plain worker thread is dropped: `MarimoComm._broadcast` ->
+`broadcast_notification` hits `ContextNotInitializedError`, logs
+`No context initialized.` at DEBUG and returns. The first browser run showed
+exactly that -- chunk requests going out, 7 dropped replies, blank canvas. The
+bridge now runs its workers through `make_bridge_thread`, which builds a
+`marimo.Thread` (a context-cloning thread) when a runtime context is installed
+on the spawning thread, and a plain daemon thread otherwise (Jupyter's IOPub is
+thread-safe). Workers are spawned lazily from `_on_bridge_msg`, i.e. on the
+kernel thread, because that is the only place marimo's context can be cloned;
+a worker whose `should_exit` flips (its cell was re-run) is pruned and replaced
+on the next request. Same run after the fix: `No context initialized.` x0,
+32 comm messages sent.
 
 ## Python components
 
