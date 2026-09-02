@@ -78,6 +78,41 @@ that chunk (measured: 445 ms vs 453 ms). The bridge therefore:
 Cache is a byte-budgeted LRU (default 256 MB, `viewer.bridge_cache_bytes`).
 Cleared on new image and on plate FOV change.
 
+**Measured (2026-09-02, `examples/image.zarr`, 10T x 3Z x 2048² `>u2`, levels
+s0/s1/s2, chunks `(10, 16, 512, 512)`).** Kernel-side, driving
+`_handle_custom_msg` directly with `{"kind":"chunk", ...}` requests and timing
+until the reply is produced:
+
+| request | time |
+| --- | --- |
+| level 2, t=0 z=0, tile (0,0) — cold | 452 ms |
+| level 2, t=1 z=0, same tile — sibling in the same chunk block | 1.2 ms |
+| level 2, t=0 z=1, same tile — sibling in the same chunk block | 1.1 ms |
+| level 0, t=0 z=0, tile (0,0) — cold | 470 ms |
+| level 0, t=1 z=0, same tile — sibling | 1.2 ms |
+
+Two cold block reads populated 60 cache entries / 30 MB, i.e. one 452 ms read
+buys 30 sibling tiles at ~1 ms each — the chunk-aware rule holds. Replies carry
+512x512 uint16 = 524288 raw bytes and decode to sane pixel values
+(level 0 tile (0,0): min 85, max 129, mean 102.3).
+
+**Browser status: not yet rendering under marimo (blocked).** In headless
+chromium against `examples/viv_local_zarr_demo.py` the Viv canvas mounts
+correctly (Canvas2D hidden, WebGL2 context live, `MultiscaleImageLayer` built
+with `selections=[{c:0,t:0,z:0}]`, `contrastLimits=[[77,299]]`, viewState
+centred on 2048²) and the frontend does issue chunk requests — but every tile
+stays unloaded and the canvas is blank. Root cause is on the marimo host side,
+not in the bridge logic: `_serve_chunk` runs on a `zarr-bridge` worker thread,
+and marimo's runtime context is a `threading.local`
+(`marimo._runtime.context.types._THREAD_LOCAL_CONTEXT`), so
+`MarimoComm._broadcast` -> `broadcast_notification` hits
+`ContextNotInitializedError`, logs `No context initialized.` at DEBUG and drops
+the reply. Kernel debug log shows the pairing directly: `Handling message for
+comm <id>` (request received) then `Sending comm message <id>` immediately
+followed by `No context initialized.` for each tile. The fix belongs in the
+bridge: reply from the kernel thread (or copy the marimo runtime context into
+the worker threads).
+
 ## Python components
 
 ### `anybioimage/ngff.py` (new, no widget dependencies)
