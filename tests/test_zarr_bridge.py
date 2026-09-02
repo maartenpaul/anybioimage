@@ -162,3 +162,138 @@ def test_bridge_cache_set_max_bytes_evicts():
     cache.set_max_bytes(50)
     assert len(cache) == 1
     assert cache.get(("b",)) is not None and cache.get(("a",)) is None
+
+
+# --- ZarrBridgeMixin: attach/detach, message handling, dedupe ----------------
+
+import time  # noqa: E402
+
+from anybioimage import BioImageViewer  # noqa: E402
+
+
+@pytest.fixture
+def _fake_viv_esm(monkeypatch):
+    import anybioimage.viewer as viewer_mod
+    monkeypatch.setattr(viewer_mod, "get_backend_esm", lambda name: "export default {}")
+
+
+@pytest.fixture
+def viv(_fake_viv_esm):
+    v = BioImageViewer(render_backend="viv")
+    v._sent = []
+    v.send = lambda content, buffers=None: v._sent.append((content, buffers or []))
+    yield v
+    v.close()
+
+
+def _wait_sent(v, n, timeout=5.0):
+    deadline = time.time() + timeout
+    while len(v._sent) < n and time.time() < deadline:
+        time.sleep(0.01)
+    assert len(v._sent) >= n, f"only {len(v._sent)} replies"
+
+
+def test_attach_bridge_populates_traitlets(viv, v04_store):
+    viv._attach_bridge(ngff.open_image(v04_store))
+    assert viv._zarr_source["mode"] == "bridge"
+    assert viv._zarr_source["labels"] == ["t", "c", "z", "y", "x"]
+    assert viv._zarr_source["dtype"] == "uint16"
+    assert [lvl["shape"] for lvl in viv._zarr_source["levels"]] == [[2, 3, 2, 64, 96], [2, 3, 2, 32, 48]]
+    assert viv._zarr_source["levels"][0]["chunks"] == [1, 1, 1, 32, 32]
+    assert (viv.dim_t, viv.dim_c, viv.dim_z, viv.height, viv.width) == (2, 3, 2, 64, 96)
+    assert [c["name"] for c in viv._channel_settings] == ["Ch0", "Ch1", "Ch2"]
+    assert viv._channel_settings[0]["color"] == "#ff0000"
+    assert viv.image_data == "" and viv._full_array is None and viv._bioimage is None
+    assert viv._render_ready is False
+
+
+def test_attach_bridge_without_omero_samples_lowest_level(viv, v04_sloppy_store):
+    viv._attach_bridge(ngff.open_image(v04_sloppy_store))
+    ch = viv._channel_settings[0]
+    assert 0.0 <= ch["data_min"] < ch["data_max"] <= 65535.0
+    assert ch["name"] == "Ch 0"
+
+
+def test_chunk_request_replies_with_bytes(viv, v04_store):
+    viv._attach_bridge(ngff.open_image(v04_store))
+    viv._handle_custom_msg({"kind": "chunk", "requestId": 7, "level": 1, "t": 1, "c": 2, "z": 0,
+                            "tx": 1, "ty": 0, "tileSize": 32}, [])
+    _wait_sent(viv, 1)
+    content, buffers = viv._sent[0]
+    assert content == {"kind": "chunk", "requestId": 7, "ok": True, "w": 16, "h": 32, "dtype": "uint16"}
+    expect = np.asarray(ngff.open_image(v04_store).levels[1][1, 2, 0, 0:32, 32:48])
+    assert buffers[0] == np.ascontiguousarray(expect.astype("<u2")).tobytes()
+
+
+def test_chunk_request_error_reply(viv, v04_store):
+    viv._attach_bridge(ngff.open_image(v04_store))
+    viv._handle_custom_msg({"kind": "chunk", "requestId": 8, "level": 0, "t": 0, "c": 0, "z": 0,
+                            "tx": 99, "ty": 0, "tileSize": 32}, [])
+    _wait_sent(viv, 1)
+    content, buffers = viv._sent[0]
+    assert content["ok"] is False and content["requestId"] == 8 and "outside" in content["error"]
+    assert buffers == []
+
+
+def test_chunk_request_without_image_errors(viv):
+    viv._handle_custom_msg({"kind": "chunk", "requestId": 1, "level": 0, "tx": 0, "ty": 0}, [])
+    _wait_sent(viv, 1)
+    assert viv._sent[0][0]["ok"] is False
+
+
+def test_non_chunk_messages_ignored(viv):
+    viv._handle_custom_msg({"kind": "something-else"}, [])
+    viv._handle_custom_msg("not a dict", [])
+    time.sleep(0.05)
+    assert viv._sent == []
+
+
+def test_sibling_tile_is_cache_hit(viv, v04_store):
+    img = ngff.open_image(v04_store)
+    # chunks (1,1,1,32,32): make t span the whole chunk so t=0 and t=1 share a block
+    img.levels[0] = FakeArray(np.asarray(img.levels[0][:]), chunks=(2, 1, 1, 32, 32))
+    viv._attach_bridge(img)
+    req = {"kind": "chunk", "level": 0, "c": 0, "z": 0, "tx": 0, "ty": 0, "tileSize": 32}
+    viv._handle_custom_msg({**req, "requestId": 1, "t": 0}, [])
+    _wait_sent(viv, 1)
+    viv._handle_custom_msg({**req, "requestId": 2, "t": 1}, [])
+    _wait_sent(viv, 2)
+    assert img.levels[0].reads == 1
+    assert len(viv._bridge_cache) == 2
+
+
+def test_concurrent_siblings_read_block_once(viv, v04_store):
+    img = ngff.open_image(v04_store)
+    img.levels[0] = FakeArray(np.asarray(img.levels[0][:]), chunks=(2, 3, 2, 32, 32))
+    viv._attach_bridge(img)
+    req = {"kind": "chunk", "level": 0, "tx": 0, "ty": 0, "tileSize": 32}
+    n = 0
+    for t in range(2):
+        for c in range(3):
+            for z in range(2):
+                n += 1
+                viv._handle_custom_msg({**req, "requestId": n, "t": t, "c": c, "z": z}, [])
+    _wait_sent(viv, 12)
+    assert all(content["ok"] for content, _ in viv._sent)
+    assert img.levels[0].reads == 1          # in-flight dedupe: one block read for the burst
+
+
+def test_detach_on_numpy_load_clears_bridge(viv, v04_store):
+    viv._attach_bridge(ngff.open_image(v04_store))
+    viv.set_image(np.zeros((16, 16), dtype=np.uint8))
+    assert viv._zarr_source == {} and viv._bridge_image is None and len(viv._bridge_cache) == 0
+
+
+def test_bridge_cache_bytes_traitlet_resizes(viv):
+    viv.bridge_cache_bytes = 1234
+    assert viv._bridge_cache.max_bytes == 1234
+
+
+def test_canvas2d_viewer_has_inert_bridge():
+    v = BioImageViewer()
+    v._sent = []
+    v.send = lambda content, buffers=None: v._sent.append(content)
+    v._handle_custom_msg({"kind": "chunk", "requestId": 1, "level": 0, "tx": 0, "ty": 0}, [])
+    _wait_sent(v, 1)
+    assert v._sent[0]["ok"] is False
+    v.close()

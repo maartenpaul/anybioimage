@@ -13,11 +13,13 @@ from .mixins import (
     MaskManagementMixin,
     PlateLoadingMixin,
     SAMIntegrationMixin,
+    ZarrBridgeMixin,
 )
 
 
 class BioImageViewer(
     ImageLoadingMixin,
+    ZarrBridgeMixin,
     PlateLoadingMixin,
     MaskManagementMixin,
     AnnotationsMixin,
@@ -169,6 +171,8 @@ class BioImageViewer(
     _zarr_source = traitlets.Dict({}).tag(sync=True)
     # Flipped True by the Viv frontend once the first frame has props+viewState
     _render_ready = traitlets.Bool(False).tag(sync=True)
+    # Byte budget of the kernel-side tile cache used by the zarr chunk bridge
+    bridge_cache_bytes = traitlets.Int(256 * 1024 * 1024).tag(sync=False)
 
     def __init__(self, *, render_backend: str = "canvas2d", **kwargs):
         if render_backend not in KNOWN_BACKENDS:
@@ -222,6 +226,7 @@ class BioImageViewer(
         self.observe(self._on_histogram_request, names=["_histogram_request"])
         self.observe(self._on_jpeg_toggle, names=["use_jpeg_tiles"])
         self._render_backend = render_backend
+        self._init_bridge()
 
     def close(self):
         """Clean up resources when the widget is closed.
@@ -234,6 +239,8 @@ class BioImageViewer(
             self._precompute_event.set()
         if getattr(self, "_prefetch_executor", None) is not None:
             self._prefetch_executor.shutdown(wait=False)
+        if hasattr(self, "_close_bridge"):
+            self._close_bridge()
         super().close()
 
     _esm = get_backend_esm("canvas2d")

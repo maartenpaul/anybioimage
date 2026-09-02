@@ -247,6 +247,8 @@ class ImageLoadingMixin:
         self._precompute_future = None
         self._full_array = None
         self._bioimage = None
+        if hasattr(self, "_detach_bridge"):
+            self._detach_bridge()
 
         with self.hold_trait_notifications():
             self.dim_t = _dim("t")
@@ -279,6 +281,8 @@ class ImageLoadingMixin:
         """
         if getattr(self, "_zarr_source", None):
             self._zarr_source = {}
+            if hasattr(self, "_detach_bridge"):
+                self._detach_bridge()
         if not isinstance(data, np.ndarray):
             data = np.asarray(data)
 
@@ -354,6 +358,8 @@ class ImageLoadingMixin:
         """
         if getattr(self, "_zarr_source", None):
             self._zarr_source = {}
+            if hasattr(self, "_detach_bridge"):
+                self._detach_bridge()
         self._bioimage = img
         self._full_array = None
 

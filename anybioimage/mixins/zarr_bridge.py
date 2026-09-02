@@ -152,3 +152,191 @@ def read_tile_block(img: ngff.NgffImage, level: int, t: int, c: int, z: int,
         plane = block[tuple(idx)]
         out[(level, pos["t"], pos["c"], pos["z"], ty, tx)] = (w, h, plane.tobytes())
     return out
+
+
+_RANGE_SAMPLE_MAX_PIXELS = 4 * 1024 * 1024
+
+
+def _default_channel_ranges(img: ngff.NgffImage, dim_c: int) -> list[tuple[float, float]]:
+    """Per-channel (min, max) from the lowest pyramid level at t=0, z=middle.
+
+    Only used when the store has no ``omero`` block. Returns [] (caller keeps
+    the dtype range) when the lowest level is still bigger than 4 MP.
+    """
+    arr = img.levels[-1]
+    axes = img.axes
+    shape = tuple(int(s) for s in arr.shape)
+    if shape[axes.index("y")] * shape[axes.index("x")] > _RANGE_SAMPLE_MAX_PIXELS:
+        return []
+    idx: list = []
+    for i, ax in enumerate(axes):
+        if ax in _SPATIAL or ax == "c":
+            idx.append(slice(None))
+        elif ax == "z":
+            idx.append(shape[i] // 2)
+        else:
+            idx.append(0)
+    data = np.asarray(arr[tuple(idx)])
+    if "c" in axes:
+        c_axis = [ax for ax in axes if ax in ("c", "y", "x")].index("c")
+        data = np.moveaxis(data, c_axis, 0)
+    else:
+        data = data[None]
+    out = []
+    for ci in range(dim_c):
+        plane = data[min(ci, data.shape[0] - 1)]
+        out.append((float(plane.min()), float(plane.max())))
+    return out
+
+
+def _block_key(img: ngff.NgffImage, level: int, t: int, c: int, z: int, tx: int, ty: int) -> tuple:
+    """Identity of the zarr chunk block a tile request will read (for in-flight dedupe)."""
+    arr = img.levels[level]
+    chunks = tuple(int(k) for k in arr.chunks)
+    wanted = {"t": t, "c": c, "z": z}
+    parts = [level, tx, ty]
+    for i, ax in enumerate(img.axes):
+        if ax in _SPATIAL:
+            continue
+        pos = int(wanted.get(ax, 0))
+        parts.append(pos // chunks[i] if ax in wanted else 0)
+    return tuple(parts)
+
+
+class ZarrBridgeMixin:
+    """Serve tiles of an ``NgffImage`` to the Viv frontend over ``model.send``.
+
+    Attributes expected from the host widget: ``_zarr_source``, ``dim_*``,
+    ``height``, ``width``, ``current_t``, ``current_z``, ``_channel_settings``,
+    ``image_data``, ``_render_ready``, ``bridge_cache_bytes``, ``_precompute_event``,
+    ``_precompute_future``, ``_full_array``, ``_bioimage``, ``send``, ``on_msg``.
+    """
+
+    def _init_bridge(self) -> None:
+        self._bridge_image: ngff.NgffImage | None = None
+        self._bridge_dtype = np.dtype("uint16")
+        self._bridge_cache = BridgeCache(int(getattr(self, "bridge_cache_bytes", DEFAULT_CACHE_BYTES)))
+        self._bridge_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="zarr-bridge")
+        self._bridge_send_lock = threading.Lock()
+        self._bridge_inflight: dict[tuple, threading.Event] = {}
+        self._bridge_inflight_lock = threading.Lock()
+        self.on_msg(self._on_bridge_msg)
+        self.observe(self._on_bridge_cache_bytes, names=["bridge_cache_bytes"])
+
+    def _close_bridge(self) -> None:
+        ex = getattr(self, "_bridge_executor", None)
+        if ex is not None:
+            ex.shutdown(wait=False, cancel_futures=True)
+        self._bridge_image = None
+
+    def _on_bridge_cache_bytes(self, change) -> None:
+        self._bridge_cache.set_max_bytes(int(change["new"]))
+
+    # ---- attach / detach -------------------------------------------------
+
+    def _attach_bridge(self, img: ngff.NgffImage) -> None:
+        """Point the viv frontend at ``img`` via the chunk bridge."""
+        out_dtype = viv_dtype(img.dtype)
+        if out_dtype != img.dtype:
+            logger.warning("dtype %s not GPU-uploadable; serving as float32", img.dtype)
+
+        if getattr(self, "_precompute_event", None) is not None:
+            self._precompute_event.set()
+        self._precompute_future = None
+        self._full_array = None
+        self._bioimage = None
+        self._bridge_cache.clear()
+        self._bridge_image = img
+        self._bridge_dtype = out_dtype
+
+        dim_c = img.size("c")
+        channels = _channel_settings_from_omero({"omero": {"channels": img.omero_channels}}, dim_c, out_dtype)
+        if not img.omero_channels:
+            for ch, (lo, hi) in zip(channels, _default_channel_ranges(img, dim_c)):
+                if hi > lo:
+                    ch["data_min"], ch["data_max"] = lo, hi
+                    ch["min"], ch["max"] = 0.0, 1.0
+
+        with self.hold_trait_notifications():
+            self.dim_t = img.size("t")
+            self.dim_c = dim_c
+            self.dim_z = img.size("z")
+            self.height = img.size("y")
+            self.width = img.size("x")
+            self.current_t = 0
+            self.current_z = 0
+            self._channel_settings = channels
+            self.image_data = ""
+            self._render_ready = False
+        self._zarr_source = {
+            "mode": "bridge",
+            "levels": [{"shape": [int(s) for s in a.shape], "chunks": [int(k) for k in a.chunks]}
+                       for a in img.levels],
+            "labels": list(img.axes),
+            "dtype": out_dtype.name,
+        }
+        logger.info("Viv backend: kernel chunk bridge attached (%d levels, %s)", len(img.levels), out_dtype.name)
+
+    def _detach_bridge(self) -> None:
+        """Forget the bridged image (called when a non-bridge image is loaded)."""
+        self._bridge_image = None
+        cache = getattr(self, "_bridge_cache", None)
+        if cache is not None:
+            cache.clear()
+
+    # ---- message handling ------------------------------------------------
+
+    def _on_bridge_msg(self, widget, content, buffers) -> None:
+        if not isinstance(content, dict) or content.get("kind") != "chunk":
+            return
+        self._bridge_executor.submit(self._serve_chunk, content)
+
+    def _serve_chunk(self, req: dict) -> None:
+        rid = req.get("requestId")
+        try:
+            img = self._bridge_image
+            if img is None:
+                raise RuntimeError("no bridged image attached")
+            key = (int(req.get("level", 0)), int(req.get("t", 0)), int(req.get("c", 0)),
+                   int(req.get("z", 0)), int(req["ty"]), int(req["tx"]))
+            w, h, data = self._bridge_tile(img, key, int(req.get("tileSize", 512)))
+            reply = {"kind": "chunk", "requestId": rid, "ok": True, "w": w, "h": h,
+                     "dtype": self._bridge_dtype.name}
+            with self._bridge_send_lock:
+                self.send(reply, buffers=[data])
+        except Exception as e:
+            logger.debug("chunk request %r failed: %s", req, e)
+            with self._bridge_send_lock:
+                self.send({"kind": "chunk", "requestId": rid, "ok": False, "error": f"{type(e).__name__}: {e}"})
+
+    def _bridge_tile(self, img: ngff.NgffImage, key: TileKey, tile_size: int) -> TileValue:
+        hit = self._bridge_cache.get(key)
+        if hit is not None:
+            return hit
+        level, t, c, z, ty, tx = key
+        if level < 0 or level >= len(img.levels):
+            raise IndexError(f"level {level} out of range")
+        # In-flight dedupe: a burst of sibling requests (Viv asks for many
+        # planes of one chunk per frame) must decode the block only once.
+        bkey = _block_key(img, level, t, c, z, tx, ty)
+        with self._bridge_inflight_lock:
+            ev = self._bridge_inflight.get(bkey)
+            leader = ev is None
+            if leader:
+                ev = self._bridge_inflight[bkey] = threading.Event()
+        if not leader:
+            ev.wait()
+            hit = self._bridge_cache.get(key)
+            if hit is not None:
+                return hit
+            # Leader failed or block was evicted/too big to cache — read ourselves.
+        try:
+            tiles = read_tile_block(img, level, t, c, z, tx, ty, tile_size, self._bridge_dtype,
+                                    max_block_bytes=self._bridge_cache.max_bytes)
+            self._bridge_cache.put_many(tiles.items())
+            return tiles[key]
+        finally:
+            if leader:
+                with self._bridge_inflight_lock:
+                    self._bridge_inflight.pop(bkey, None)
+                ev.set()
