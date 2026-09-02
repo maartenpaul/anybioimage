@@ -31,7 +31,7 @@ DEFAULT_CACHE_BYTES = 256 * 1024 ** 2
 _VIV_DTYPES = {"uint8", "uint16", "uint32", "float32"}
 _SPATIAL = ("y", "x")
 
-TileKey = tuple  # (level, t, c, z, ty, tx)
+TileKey = tuple  # cache key: (gen, level, t, c, z, ty, tx); read_tile_block emits it without gen
 TileValue = tuple  # (w, h, bytes)
 
 
@@ -106,6 +106,9 @@ def read_tile_block(img: ngff.NgffImage, level: int, t: int, c: int, z: int,
         raise IndexError(f"level {level} out of range")
     arr = img.levels[level]
     axes, shape, chunks = img.axes, tuple(int(s) for s in arr.shape), tuple(int(k) for k in arr.chunks)
+    for ax, pos in (("t", t), ("c", c), ("z", z)):
+        if ax not in axes and int(pos) != 0:
+            raise IndexError(f"{ax}={pos} but store has no {ax} axis")
     yi, xi = axes.index("y"), axes.index("x")
     y0, x0 = ty * tile_size, tx * tile_size
     if y0 >= shape[yi] or x0 >= shape[xi] or tx < 0 or ty < 0:
@@ -215,6 +218,10 @@ class ZarrBridgeMixin:
     def _init_bridge(self) -> None:
         self._bridge_image: ngff.NgffImage | None = None
         self._bridge_dtype = np.dtype("uint16")
+        # Bumped on every attach/detach; part of every cache and in-flight key so
+        # a worker still reading the previous image can never publish its tiles
+        # into the new image's cache.
+        self._bridge_gen = 0
         self._bridge_cache = BridgeCache(int(getattr(self, "bridge_cache_bytes", DEFAULT_CACHE_BYTES)))
         self._bridge_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="zarr-bridge")
         self._bridge_send_lock = threading.Lock()
@@ -227,7 +234,7 @@ class ZarrBridgeMixin:
         ex = getattr(self, "_bridge_executor", None)
         if ex is not None:
             ex.shutdown(wait=False, cancel_futures=True)
-        self._bridge_image = None
+        self._detach_bridge()
 
     def _on_bridge_cache_bytes(self, change) -> None:
         self._bridge_cache.set_max_bytes(int(change["new"]))
@@ -245,9 +252,7 @@ class ZarrBridgeMixin:
         self._precompute_future = None
         self._full_array = None
         self._bioimage = None
-        self._bridge_cache.clear()
-        self._bridge_image = img
-        self._bridge_dtype = out_dtype
+        self._swap_bridge_image(img, out_dtype)
 
         dim_c = img.size("c")
         channels = _channel_settings_from_omero({"omero": {"channels": img.omero_channels}}, dim_c, out_dtype)
@@ -277,31 +282,53 @@ class ZarrBridgeMixin:
         }
         logger.info("Viv backend: kernel chunk bridge attached (%d levels, %s)", len(img.levels), out_dtype.name)
 
+    def _swap_bridge_image(self, img: ngff.NgffImage | None, dtype: np.dtype) -> None:
+        """Atomically retire the current image: bump the generation, install
+        ``img``, drop the cache and wake every in-flight waiter.
+
+        Waiters wake to a cache miss and re-read for themselves; their leader's
+        ``put_many`` is dropped because its generation no longer matches.
+        """
+        with self._bridge_inflight_lock:
+            self._bridge_gen += 1
+            self._bridge_image = img
+            self._bridge_dtype = dtype
+            self._bridge_cache.clear()
+            stale = list(self._bridge_inflight.values())
+            self._bridge_inflight.clear()
+        for ev in stale:
+            ev.set()
+
     def _detach_bridge(self) -> None:
         """Forget the bridged image (called when a non-bridge image is loaded)."""
-        self._bridge_image = None
-        cache = getattr(self, "_bridge_cache", None)
-        if cache is not None:
-            cache.clear()
+        if getattr(self, "_bridge_cache", None) is None:
+            return
+        self._swap_bridge_image(None, self._bridge_dtype)
 
     # ---- message handling ------------------------------------------------
 
     def _on_bridge_msg(self, widget, content, buffers) -> None:
         if not isinstance(content, dict) or content.get("kind") != "chunk":
             return
+        if self._bridge_image is None:
+            with self._bridge_send_lock:
+                self.send({"kind": "chunk", "requestId": content.get("requestId"),
+                           "ok": False, "error": "no bridged image attached"})
+            return
         self._bridge_executor.submit(self._serve_chunk, content)
 
     def _serve_chunk(self, req: dict) -> None:
         rid = req.get("requestId")
         try:
-            img = self._bridge_image
+            with self._bridge_inflight_lock:
+                img, gen, dtype = self._bridge_image, self._bridge_gen, self._bridge_dtype
             if img is None:
                 raise RuntimeError("no bridged image attached")
             key = (int(req.get("level", 0)), int(req.get("t", 0)), int(req.get("c", 0)),
                    int(req.get("z", 0)), int(req["ty"]), int(req["tx"]))
-            w, h, data = self._bridge_tile(img, key, int(req.get("tileSize", 512)))
+            w, h, data = self._bridge_tile(img, gen, key, int(req.get("tileSize", 512)), dtype)
             reply = {"kind": "chunk", "requestId": rid, "ok": True, "w": w, "h": h,
-                     "dtype": self._bridge_dtype.name}
+                     "dtype": dtype.name}
             with self._bridge_send_lock:
                 self.send(reply, buffers=[data])
         except Exception as e:
@@ -309,8 +336,11 @@ class ZarrBridgeMixin:
             with self._bridge_send_lock:
                 self.send({"kind": "chunk", "requestId": rid, "ok": False, "error": f"{type(e).__name__}: {e}"})
 
-    def _bridge_tile(self, img: ngff.NgffImage, key: TileKey, tile_size: int) -> TileValue:
-        hit = self._bridge_cache.get(key)
+    def _bridge_tile(self, img: ngff.NgffImage, gen: int, key: tuple, tile_size: int,
+                     dtype: np.dtype) -> TileValue:
+        """Serve ``(level, t, c, z, ty, tx)`` of ``img``, whose generation is ``gen``."""
+        ckey = (gen,) + key
+        hit = self._bridge_cache.get(ckey)
         if hit is not None:
             return hit
         level, t, c, z, ty, tx = key
@@ -318,7 +348,7 @@ class ZarrBridgeMixin:
             raise IndexError(f"level {level} out of range")
         # In-flight dedupe: a burst of sibling requests (Viv asks for many
         # planes of one chunk per frame) must decode the block only once.
-        bkey = _block_key(img, level, t, c, z, tx, ty)
+        bkey = (gen,) + _block_key(img, level, t, c, z, tx, ty)
         with self._bridge_inflight_lock:
             ev = self._bridge_inflight.get(bkey)
             leader = ev is None
@@ -326,14 +356,19 @@ class ZarrBridgeMixin:
                 ev = self._bridge_inflight[bkey] = threading.Event()
         if not leader:
             ev.wait()
-            hit = self._bridge_cache.get(key)
+            hit = self._bridge_cache.get(ckey)
             if hit is not None:
                 return hit
-            # Leader failed or block was evicted/too big to cache — read ourselves.
+            # Leader failed, the image was swapped, or the block was evicted /
+            # too big to cache — read ourselves.
         try:
-            tiles = read_tile_block(img, level, t, c, z, tx, ty, tile_size, self._bridge_dtype,
+            tiles = read_tile_block(img, level, t, c, z, tx, ty, tile_size, dtype,
                                     max_block_bytes=self._bridge_cache.max_bytes)
-            self._bridge_cache.put_many(tiles.items())
+            # Publish only while this generation is still current, under the same
+            # lock _swap_bridge_image clears the cache with.
+            with self._bridge_inflight_lock:
+                if self._bridge_gen == gen:
+                    self._bridge_cache.put_many(((gen,) + k, v) for k, v in tiles.items())
             return tiles[key]
         finally:
             if leader:

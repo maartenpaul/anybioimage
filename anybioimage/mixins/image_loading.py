@@ -1192,6 +1192,8 @@ class ImageLoadingMixin:
 
     def _on_channel_settings_change(self, change):
         """Observer callback when channel settings change."""
+        if getattr(self, "_zarr_source", {}).get("mode"):
+            return  # Viv owns rendering for zarr-backed images
         if getattr(self, "_precompute_event", None) is not None:
             self._precompute_event.set()
         self._tile_cache.clear()

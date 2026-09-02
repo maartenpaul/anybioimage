@@ -1,8 +1,11 @@
 """Kernel-side chunk bridge: tile reads, chunk-block prefill, byte-budget LRU."""
+import threading
+import time
+
 import numpy as np
 import pytest
 
-from anybioimage import ngff
+from anybioimage import BioImageViewer, ngff
 from anybioimage.mixins import zarr_bridge as zb
 
 
@@ -27,6 +30,23 @@ class FakeArray:
     def __getitem__(self, idx):
         self.reads += 1
         return self.data[idx]
+
+
+class BlockingFakeArray(FakeArray):
+    """FakeArray whose reads park on ``gate``, announcing arrival via ``entered``.
+
+    Lets a test pin a worker inside the zarr read and act while it is in flight.
+    """
+
+    def __init__(self, data, chunks):
+        super().__init__(data, chunks)
+        self.gate = threading.Event()
+        self.entered = threading.Event()
+
+    def __getitem__(self, idx):
+        self.entered.set()
+        assert self.gate.wait(5.0), "blocking read never released"
+        return super().__getitem__(idx)
 
 
 def _img(data, chunks, axes):
@@ -84,6 +104,14 @@ def test_read_tile_block_axes_without_t_and_c():
                                out_dtype=np.dtype("uint8"), max_block_bytes=1 << 30)
     assert set(tiles) == {(0, 0, 0, 0, 0, 0), (0, 0, 0, 1, 0, 0)}
     assert tiles[(0, 0, 0, 1, 0, 0)][2] == data[1].tobytes()
+
+
+def test_read_tile_block_rejects_position_on_absent_axis():
+    data = np.zeros((2, 16, 16), dtype=np.uint8)
+    img, _ = _img(data, chunks=(2, 16, 16), axes="zyx")
+    with pytest.raises(IndexError, match="no c axis"):
+        zb.read_tile_block(img, 0, t=0, c=1, z=0, tx=0, ty=0, tile_size=16,
+                           out_dtype=np.dtype("uint8"), max_block_bytes=1 << 30)
 
 
 def test_read_tile_block_respects_max_block_bytes():
@@ -165,10 +193,6 @@ def test_bridge_cache_set_max_bytes_evicts():
 
 
 # --- ZarrBridgeMixin: attach/detach, message handling, dedupe ----------------
-
-import time  # noqa: E402
-
-from anybioimage import BioImageViewer  # noqa: E402
 
 
 @pytest.fixture
@@ -264,7 +288,8 @@ def test_sibling_tile_is_cache_hit(viv, v04_store):
 
 def test_concurrent_siblings_read_block_once(viv, v04_store):
     img = ngff.open_image(v04_store)
-    img.levels[0] = FakeArray(np.asarray(img.levels[0][:]), chunks=(2, 3, 2, 32, 32))
+    arr = BlockingFakeArray(np.asarray(img.levels[0][:]), chunks=(2, 3, 2, 32, 32))
+    img.levels[0] = arr
     viv._attach_bridge(img)
     req = {"kind": "chunk", "level": 0, "tx": 0, "ty": 0, "tileSize": 32}
     n = 0
@@ -273,9 +298,40 @@ def test_concurrent_siblings_read_block_once(viv, v04_store):
             for z in range(2):
                 n += 1
                 viv._handle_custom_msg({**req, "requestId": n, "t": t, "c": c, "z": z}, [])
+    # The whole burst is queued while the leader is parked inside the read, so a
+    # single read afterwards can only mean the followers waited on the leader.
+    assert arr.entered.wait(5.0)
+    arr.gate.set()
     _wait_sent(viv, 12)
     assert all(content["ok"] for content, _ in viv._sent)
-    assert img.levels[0].reads == 1          # in-flight dedupe: one block read for the burst
+    assert arr.reads == 1          # in-flight dedupe: one block read for the burst
+
+
+def test_attach_during_flight_never_serves_stale_pixels(viv, v04_store):
+    shape = (2, 3, 2, 64, 96)
+    chunks = (1, 1, 1, 32, 32)
+    a = ngff.open_image(v04_store)
+    a_arr = BlockingFakeArray(np.ones(shape, dtype=np.uint16), chunks=chunks)
+    a.levels[0] = a_arr
+    b = ngff.open_image(v04_store)
+    b.levels[0] = FakeArray(np.full(shape, 2, dtype=np.uint16), chunks=chunks)
+
+    viv._attach_bridge(a)
+    req = {"kind": "chunk", "level": 0, "t": 0, "c": 0, "z": 0, "tx": 0, "ty": 0, "tileSize": 32}
+    viv._handle_custom_msg({**req, "requestId": 1}, [])
+    assert a_arr.entered.wait(5.0)   # a worker is inside image A's read ...
+    viv._attach_bridge(b)            # ... and the image is swapped under it
+    a_arr.gate.set()
+    _wait_sent(viv, 1)
+    viv._handle_custom_msg({**req, "requestId": 2}, [])
+    _wait_sent(viv, 2)
+
+    replies = {content["requestId"]: (content, bufs) for content, bufs in viv._sent}
+    assert replies[1][0]["ok"] and replies[2][0]["ok"]
+    assert set(np.frombuffer(replies[1][1][0], dtype="<u2")) == {1}   # A's request keeps A's pixels
+    assert set(np.frombuffer(replies[2][1][0], dtype="<u2")) == {2}   # B's request never sees A's
+    assert len(viv._bridge_cache) > 0
+    assert all(k[0] == viv._bridge_gen for k in viv._bridge_cache._d)
 
 
 def test_detach_on_numpy_load_clears_bridge(viv, v04_store):
