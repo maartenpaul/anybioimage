@@ -106,3 +106,12 @@ def test_set_plate_passes_storage_options(monkeypatch, plate_store):
     monkeypatch.setattr(ngff, "open_group", fake_open_group)
     v.set_plate(plate_store, storage_options={"anon": True})
     assert captured["storage_options"] == {"anon": True}
+
+
+def test_local_plate_missing_fov_falls_back(monkeypatch, _fake_viv_esm, plate_store):
+    v = BioImageViewer(render_backend="viv")
+    v.set_plate(plate_store)
+    called = {}
+    monkeypatch.setattr(v, "_load_plate_image_bioio", lambda p: called.setdefault("path", p))
+    v._load_plate_image("99")  # FOV not present in the well's zarr group
+    assert called["path"] == f"{plate_store}/A/1/99"

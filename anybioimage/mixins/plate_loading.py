@@ -154,8 +154,8 @@ class PlateLoadingMixin:
                 except Exception as e:
                     logger.info("Viv plate FOV load failed (%s); falling back to bioio", e)
             else:
-                group = self._plate_store[f"{self._current_well_path}/{fov}"]
                 try:
+                    group = self._plate_store[f"{self._current_well_path}/{fov}"]
                     img = ngff.open_image(group)
                 except Exception as e:
                     logger.info("Viv plate FOV open failed (%s); falling back to bioio", e)
