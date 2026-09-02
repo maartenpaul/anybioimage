@@ -158,13 +158,16 @@ Requires `uv pip install "anybioimage[sam]"` (Python 3.10–3.12).
 | Backend | Default | Best for |
 |---|---|---|
 | `canvas2d` | ✅ | Local arrays, BioImage/TIFF/CZI/ND2, full annotation & SAM toolset |
-| `viv` | opt-in | Remote OME-Zarr URLs — browser-direct chunk fetch, GPU compositing |
+| `viv` | opt-in | OME-Zarr — remote URLs browser-direct; local / S3 / GCS stores via the kernel chunk bridge (any size, zarr v2 + v3) |
 
 ```python
-# Opt in to the Viv backend for remote OME-Zarr:
+# Opt in to the Viv backend for OME-Zarr:
 viewer = BioImageViewer(render_backend="viv")
 viewer.set_image("https://example.com/data.ome.zarr")
 viewer.set_plate("https://example.com/plate.zarr")  # well/FOV switching stays browser-side
+
+viewer.set_image("/data/big.ome.zarr")                                        # local, any size
+viewer.set_image("s3://bucket/x.ome.zarr", storage_options={"anon": True})   # needs anybioimage[remote]
 ```
 
 Non-zarr inputs on the `viv` backend fall back to Canvas2D automatically (one info log).

@@ -17,6 +17,7 @@ Interactive anywidget for visualizing biological images in Jupyter and marimo no
 ```
 anybioimage/
 ├── __init__.py           # Public API exports
+├── ngff.py                # Lenient OME-NGFF metadata reader (zarr-python 3)
 ├── utils.py              # Image processing helpers and color constants
 ├── viewer.py             # Main BioImageViewer widget (JS/CSS frontend + traitlets)
 └── mixins/
@@ -25,6 +26,7 @@ anybioimage/
     ├── mask_management.py # Mask layer operations
     ├── annotations.py    # Annotation data management (ROIs, polygons, points)
     ├── plate_loading.py  # HCS OME-Zarr plate loading (well/FOV selection)
+    ├── zarr_bridge.py    # Kernel-side chunk bridge serving zarr tiles to Viv
     └── sam_integration.py # SAM model integration
 ```
 
@@ -84,15 +86,19 @@ The main widget class with these capabilities:
 
 `BioImageViewer(render_backend="viv")` opts in to the Viv backend; default `canvas2d` is unchanged.
 
-**Viv** handles URL-schemed remote OME-Zarr only — strings matching one of
-`http://`, `https://`, `s3://`, `gs://`, `file://` **and** ending in `.zarr` or `.ome.zarr`
-(query strings and trailing slashes are stripped before the suffix check).
-Everything else silently falls back to Canvas2D (one `INFO` log line).
+**Viv** renders OME-Zarr in two ways, selected by `_zarr_source.mode`:
+- `"url"` — `http(s)://…zarr` strings: browser-direct chunk fetch via Viv's `loadOmeZarr` (zarr v2 only; the server must allow CORS).
+- `"bridge"` — local paths (`str`/`Path`), `file://`, `s3://`, `gs://` and `zarr.Group` inputs: the kernel opens the store with zarr-python 3 (v2 + v3, NGFF v0.4/v0.5) and serves per-level tiles over `model.send` (`anybioimage/mixins/zarr_bridge.py` ↔ `src/render/pixel-sources/anywidget-source.js` + `bridge-source.js`). Reads whole zarr chunk blocks once and caches every tile they contain in a byte-budgeted LRU (`viewer.bridge_cache_bytes`, default 256 MB); sibling requests for one block are de-duplicated in flight. No full-plane loads, no RAM cap.
+
+Everything else (numpy, BioImage, TIFF/CZI paths) silently falls back to Canvas2D (one `INFO` log line). `set_image(..., storage_options=...)` / `set_plate(..., storage_options=...)` pass fsspec options (credentials, `anon`) for remote stores; `pip install anybioimage[remote]` adds s3fs + gcsfs.
+
+**NGFF metadata** lives in one module, `anybioimage/ngff.py` (lenient v0.4 top-level / v0.5+ `ome` block parsing, `open_image → NgffImage`, plate helpers, kernel-side http probe). Spec changes go there; per-version store fixtures are in `tests/conftest.py`.
 
 **Traitlets added for the viv backend:**
 - `_render_backend` (`Unicode`, synced) — `"canvas2d"` or `"viv"`
-- `_zarr_source` (`Dict`, synced) — `{url: str, headers: dict}`; set by `_set_zarr_url()` in `mixins/image_loading.py`; cleared on non-URL `set_image` calls
+- `_zarr_source` (`Dict`, synced) — `{mode:"url", url, headers}` or `{mode:"bridge", levels:[{shape,chunks}], labels, dtype}`; set by `_set_zarr_url()` / `_attach_bridge()`; cleared on non-zarr `set_image` calls
 - `_render_ready` (`Bool`, synced) — flips `True` when Viv has rendered the first frame; re-armed `False` on each new zarr source
+- `bridge_cache_bytes` (`Int`, not synced) — byte budget of the kernel tile cache
 
 **Architecture:**
 - Canvas2D UI lives in `anybioimage/frontend/viewer/src/canvas2d-chrome.js` and is served raw by `backends/canvas2d.py` — no build step needed.
@@ -105,7 +111,8 @@ Everything else silently falls back to Canvas2D (one `INFO` log line).
 
 **Python seam:**
 - `set_image(url, headers=None)` → `_set_zarr_url()` (metadata-only, no precompute) in `mixins/image_loading.py`
-- Plates: `_load_plate_image()` in `mixins/plate_loading.py` updates `_zarr_source` subpath browser-side for remote plates on the viv backend
+- `set_image(path|Group|s3://…)` → `_set_zarr_path()` → `ngff.open_image()` → `_attach_bridge()`
+- Plates: `_load_plate_image()` in `mixins/plate_loading.py` uses `_set_zarr_url()` for http plates and `_attach_bridge()` for everything else on the viv backend
 
 ### Annotation Tools
 

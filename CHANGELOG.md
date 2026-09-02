@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `set_image(url, headers=...)` accepts URL-schemed `.zarr`/`.ome.zarr` strings
   on both backends (Canvas2D routes them through bioio).
 - HCS plates on the viv backend: FOV switching swaps the zarr subpath browser-side.
+- Viv backend: kernel chunk bridge renders local / `s3://` / `gs://` OME-Zarr stores and `zarr.Group` inputs of any size (zarr v2 + v3, NGFF v0.4/v0.5); chunk-aware tile cache (`bridge_cache_bytes`).
+- New `anybioimage.ngff` module: lenient OME-NGFF metadata reader used by every zarr path (replaces the urllib-only probe).
+- `set_image(..., storage_options=)` / `set_plate(..., storage_options=)` for fsspec credentials; new `remote` extra (s3fs, gcsfs).
 
 ### Changed
 - Canvas2D ESM extracted verbatim to `anybioimage/frontend/viewer/src/canvas2d-chrome.js`
