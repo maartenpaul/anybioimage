@@ -68,7 +68,7 @@ export function VivCanvas({ model }) {
     run();
     return () => {
       cancelled = true;
-      if (bridgeSources) bridgeSources.forEach((s) => s.destroy());
+      if (bridgeSources) { setSources(null); bridgeSources.forEach((s) => s.destroy()); }
     };
   }, [zarrSource, model]);
 

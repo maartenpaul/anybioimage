@@ -50,7 +50,7 @@ describe('openBridge', () => {
     expect(srcs[1]._level).toBe(1);
     expect(srcs[0]._cacheSize).toBe(128);
   });
-  it('returns [] for a source without levels', () => {
-    expect(openBridge(mockModel(), { mode: 'bridge' })).toEqual([]);
+  it('throws for a source without levels', () => {
+    expect(() => openBridge(mockModel(), { mode: 'bridge' })).toThrow(/no pyramid levels/);
   });
 });

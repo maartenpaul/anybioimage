@@ -29,6 +29,7 @@ export function cacheSizePerLevel(nLevels) {
 
 export function openBridge(model, zarrSource) {
   const levels = Array.isArray(zarrSource?.levels) ? zarrSource.levels : [];
+  if (!levels.length) throw new Error('bridge source has no pyramid levels');
   const labels = zarrSource?.labels || ['t', 'c', 'z', 'y', 'x'];
   const dtype = AnywidgetPixelSource.dtypeFromPython(zarrSource?.dtype);
   const tileSize = pickTileSize(levels[0]?.chunks, labels);

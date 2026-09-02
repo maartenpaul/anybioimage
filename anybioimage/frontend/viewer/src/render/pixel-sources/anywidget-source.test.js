@@ -135,6 +135,7 @@ describe('AnywidgetPixelSource', () => {
     });
     src.destroy();
     await expect(p).rejects.toThrow(/destroyed/);
+    await p.catch((err) => expect(err.name).toBe('AbortError'));
   });
 
   it('DataView buffers with odd offset are copied, not viewed', async () => {

@@ -150,6 +150,7 @@ export class AnywidgetPixelSource {
   destroy() {
     this._model.off('msg:custom', this._listener);
     const destroyErr = new Error('pixel source destroyed');
+    destroyErr.name = 'AbortError';
     for (const entry of this._pending.values()) {
       entry.reject(destroyErr);
     }
