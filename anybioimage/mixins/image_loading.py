@@ -211,7 +211,7 @@ class ImageLoadingMixin:
         backend = getattr(self, "_render_backend", "canvas2d")
 
         if isinstance(data, zarr.Group) or _looks_like_zarr_path(data):
-            self._set_zarr_path(data, storage_options)
+            self._set_zarr_path(data, storage_options, backend)
             return
 
         if _looks_like_zarr_url(data):
@@ -239,21 +239,23 @@ class ImageLoadingMixin:
         else:
             self._set_numpy_image(data)
 
-    def _set_zarr_path(self, data, storage_options: dict | None) -> None:
+    def _set_zarr_path(self, data, storage_options: dict | None, backend: str) -> None:
         """Kernel-openable zarr (local / fsspec / Group): chunk bridge on viv,
-        bioio on Canvas2D. Plates raise; other viv failures fall back to bioio."""
+        bioio on Canvas2D. Plates raise; other viv failures fall back to bioio;
+        a missing fsspec backend (ImportError) is surfaced, not swallowed."""
         import zarr
 
         from .. import ngff
 
-        if getattr(self, "_render_backend", "canvas2d") == "viv":
+        if backend == "viv":
             try:
                 img = ngff.open_image(data, storage_options)
             except ngff.PlateError as e:
                 raise ValueError(
-                    f"{e}. Use viewer.set_plate(path) instead of set_image(path) — "
-                    f"it adds Well/FOV selectors for plate navigation."
+                    f"{e} — it adds Well/FOV selectors for plate navigation."
                 ) from e
+            except ImportError:
+                raise
             except Exception as e:
                 logger.info("Viv chunk-bridge open failed (%s); falling back to Canvas2D", e)
             else:
@@ -261,7 +263,7 @@ class ImageLoadingMixin:
                 return
         if isinstance(data, zarr.Group):
             raise TypeError("zarr.Group input requires BioImageViewer(render_backend='viv')")
-        self._set_zarr_url_canvas2d(str(data))
+        self._set_zarr_url_canvas2d(str(data), storage_options)
 
     def _set_zarr_url(self, url: str, headers: dict) -> None:
         """Viv path: fetch OME metadata once, populate dim/channel traitlets,
@@ -310,12 +312,15 @@ class ImageLoadingMixin:
         self._zarr_source = {"mode": "url", "url": url, "headers": headers or {}}
         logger.info("Viv backend: browser-direct zarr source set to %s", url)
 
-    def _set_zarr_url_canvas2d(self, url: str) -> None:
-        """Canvas2D path for zarr URLs: load through bioio as before."""
+    def _set_zarr_url_canvas2d(self, url: str, storage_options: dict | None = None) -> None:
+        """Canvas2D path for zarr URLs: load through bioio as before.
+        ``storage_options`` (fsspec credentials/options for s3://, gs://, etc.)
+        is forwarded to bioio via ``fs_kwargs`` when both BioImage and the
+        ome-zarr reader accept it."""
         import bioio_ome_zarr
         from bioio import BioImage
 
-        self._set_bioimage(BioImage(url, reader=bioio_ome_zarr.Reader))
+        self._set_bioimage(BioImage(url, reader=bioio_ome_zarr.Reader, fs_kwargs=storage_options or {}))
 
     def _set_numpy_image(self, data: np.ndarray):
         """Set the base image from a numpy array (any shape, up to 5D).

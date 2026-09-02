@@ -81,7 +81,7 @@ def test_zarr_url_skips_canvas2d_pipeline(viv_viewer):
 def test_canvas2d_backend_routes_zarr_url_to_bioio(monkeypatch):
     v = BioImageViewer()  # default backend
     called = {}
-    monkeypatch.setattr(v, "_set_zarr_url_canvas2d", lambda url: called.setdefault("url", url))
+    monkeypatch.setattr(v, "_set_zarr_url_canvas2d", lambda url, so=None: called.setdefault("url", url))
     v.set_image("https://example.org/img.ome.zarr")
     assert called["url"] == "https://example.org/img.ome.zarr"
     assert v._zarr_source == {}
@@ -93,7 +93,7 @@ def test_metadata_failure_falls_back_to_bioio(monkeypatch, caplog, _fake_viv_esm
     monkeypatch.setattr(il, "_fetch_zarr_ome_metadata", boom)
     v = BioImageViewer(render_backend="viv")
     called = {}
-    monkeypatch.setattr(v, "_set_zarr_url_canvas2d", lambda url: called.setdefault("url", url))
+    monkeypatch.setattr(v, "_set_zarr_url_canvas2d", lambda url, so=None: called.setdefault("url", url))
     with caplog.at_level(logging.INFO):
         v.set_image("https://example.org/img.ome.zarr")
     assert called["url"] == "https://example.org/img.ome.zarr"
@@ -146,7 +146,7 @@ def test_unusable_metadata_falls_back_to_bioio(monkeypatch, _fake_viv_esm):
     monkeypatch.setattr(il, "_fetch_zarr_ome_metadata", fetch)
     v = BioImageViewer(render_backend="viv")
     called = {}
-    monkeypatch.setattr(v, "_set_zarr_url_canvas2d", lambda url: called.setdefault("url", url))
+    monkeypatch.setattr(v, "_set_zarr_url_canvas2d", lambda url, so=None: called.setdefault("url", url))
     v.set_image("https://example.org/plain.zarr")
     assert called["url"] == "https://example.org/plain.zarr"
     assert v._zarr_source == {}
@@ -159,7 +159,7 @@ def test_plate_url_raises_pointing_to_set_plate(monkeypatch, _fake_viv_esm):
     monkeypatch.setattr(il, "_zarr_url_is_plate", lambda url, headers: True)
     v = BioImageViewer(render_backend="viv")
     fell_back = {}
-    monkeypatch.setattr(v, "_set_zarr_url_canvas2d", lambda url: fell_back.setdefault("url", url))
+    monkeypatch.setattr(v, "_set_zarr_url_canvas2d", lambda url, so=None: fell_back.setdefault("url", url))
     with pytest.raises(ValueError, match="set_plate"):
         v.set_image("https://example.org/plate.zarr")
     assert fell_back == {}  # did not silently route to the bioio path
@@ -266,7 +266,7 @@ def test_local_zarr_group_on_viv(_fake_viv_esm, v04_store):
 def test_local_zarr_on_canvas2d_uses_bioio(monkeypatch, v04_store):
     v = BioImageViewer()
     called = {}
-    monkeypatch.setattr(v, "_set_zarr_url_canvas2d", lambda p: called.setdefault("path", p))
+    monkeypatch.setattr(v, "_set_zarr_url_canvas2d", lambda p, so=None: called.setdefault("path", p))
     v.set_image(v04_store)
     assert called["path"] == v04_store and v._zarr_source == {}
 
@@ -281,11 +281,42 @@ def test_local_plate_to_set_image_raises(_fake_viv_esm, plate_store):
 def test_local_zarr_open_failure_on_viv_falls_back(monkeypatch, caplog, _fake_viv_esm, tmp_path):
     v = BioImageViewer(render_backend="viv")
     called = {}
-    monkeypatch.setattr(v, "_set_zarr_url_canvas2d", lambda p: called.setdefault("path", p))
+    monkeypatch.setattr(v, "_set_zarr_url_canvas2d", lambda p, so=None: called.setdefault("path", p))
     with caplog.at_level(logging.INFO):
         v.set_image(str(tmp_path / "missing.zarr"))
     assert called["path"] == str(tmp_path / "missing.zarr")
     assert v._zarr_source == {}
+    assert any("chunk-bridge open failed" in r.getMessage() for r in caplog.records)
+
+
+def test_missing_fsspec_backend_error_surfaces_on_viv(monkeypatch, _fake_viv_esm):
+    # ngff.open_group raises ImportError with an install hint when an fsspec
+    # backend (s3fs/gcsfs) is missing; that must reach the caller, not be
+    # swallowed into an INFO log + opaque bioio failure.
+    def boom(src, storage_options=None):
+        raise ImportError("pip install 'anybioimage[remote]'")
+
+    monkeypatch.setattr("anybioimage.ngff.open_image", boom)
+    v = BioImageViewer(render_backend="viv")
+    called = {}
+    monkeypatch.setattr(v, "_set_zarr_url_canvas2d", lambda p, so=None: called.setdefault("path", p))
+    with pytest.raises(ImportError, match=r"anybioimage\[remote\]"):
+        v.set_image("s3://bucket/x.zarr")
+    assert called == {}
+
+
+def test_storage_options_reach_ngff_open_image(monkeypatch, _fake_viv_esm):
+    captured = {}
+
+    def fake_open_image(src, storage_options=None):
+        captured["storage_options"] = storage_options
+        raise OSError("network unreachable")
+
+    monkeypatch.setattr("anybioimage.ngff.open_image", fake_open_image)
+    v = BioImageViewer(render_backend="viv")
+    monkeypatch.setattr(v, "_set_zarr_url_canvas2d", lambda p, so=None: None)
+    v.set_image("s3://b/x.zarr", storage_options={"anon": True})
+    assert captured["storage_options"] == {"anon": True}
 
 
 def test_zarr_group_on_canvas2d_is_type_error(v04_store):
