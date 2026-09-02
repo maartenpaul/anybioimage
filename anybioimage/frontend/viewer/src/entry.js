@@ -1,8 +1,8 @@
 // anybioimage/frontend/viewer/src/entry.js
 // Viv backend entry: build main's full Canvas2D chrome (toolbar, channel
 // panel, sliders — its renderCanvas()/requestTiles() self-guard when a zarr
-// URL is active), then mount the Viv WebGL canvas in the same wrapper.
-// Exactly one canvas is visible at a time, switched on _zarr_source.
+// source is active), then mount the Viv WebGL canvas in the same wrapper.
+// Exactly one canvas is visible at a time, switched on _zarr_source.mode.
 import chrome from './canvas2d-chrome.js'; // both files live in src/
 import React from 'react';
 import { createRoot } from 'react-dom/client';
@@ -26,7 +26,7 @@ async function render({ model, el }) {
   root.render(React.createElement(VivCanvas, { model }));
 
   const syncMode = () => {
-    const viv = Boolean((model.get('_zarr_source') || {}).url);
+    const viv = Boolean((model.get('_zarr_source') || {}).mode);
     if (c2dCanvas) c2dCanvas.style.display = viv ? 'none' : '';
     mount.style.display = viv ? '' : 'none';
   };

@@ -7,6 +7,7 @@ import { OrthographicView } from '@deck.gl/core';
 import { MultiscaleImageLayer, getDefaultInitialViewState } from '@hms-dbmi/viv';
 
 import { openOmeZarr } from './pixel-sources/zarr-source.js';
+import { openBridge } from './pixel-sources/bridge-source.js';
 import { buildImageLayerProps } from './layers/buildImageLayer.js';
 import { useModelTrait } from '../model/useModelTrait.js';
 import { classifyLoadError } from '../util/classifyLoadError.js';
@@ -46,19 +47,30 @@ export function VivCanvas({ model }) {
 
   useEffect(() => {
     let cancelled = false;
+    let bridgeSources = null;
     async function run() {
       setError(null);
-      if (!zarrSource?.url) { setSources(null); return; }
+      const mode = zarrSource?.mode;
+      if (!mode) { setSources(null); return; }
       try {
-        const { sources: srcs } = await openOmeZarr(zarrSource.url, zarrSource.headers || {});
+        let srcs;
+        if (mode === 'bridge') {
+          bridgeSources = openBridge(model, zarrSource);
+          srcs = bridgeSources;
+        } else {
+          ({ sources: srcs } = await openOmeZarr(zarrSource.url, zarrSource.headers || {}));
+        }
         if (!cancelled) setSources(srcs);
       } catch (e) {
-        if (!cancelled) { setError(classifyLoadError(e, zarrSource.url)); setSources(null); }
+        if (!cancelled) { setError(classifyLoadError(e, zarrSource.url || '(kernel bridge)')); setSources(null); }
       }
     }
     run();
-    return () => { cancelled = true; };
-  }, [zarrSource?.url]);
+    return () => {
+      cancelled = true;
+      if (bridgeSources) bridgeSources.forEach((s) => s.destroy());
+    };
+  }, [zarrSource, model]);
 
   useEffect(() => {
     if (!sources || !sources.length) return;
@@ -91,7 +103,7 @@ export function VivCanvas({ model }) {
     return [new MultiscaleImageLayer({ id: 'viv-image', viewportId: 'ortho', ...imageLayerProps })];
   }, [imageLayerProps, imageVisible]);
 
-  if (!zarrSource?.url) return null;
+  if (!zarrSource?.mode) return null;
   if (error) {
     return (
       <div style={{ color: '#b00', padding: 12 }}>

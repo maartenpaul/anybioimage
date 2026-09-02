@@ -95,7 +95,7 @@
 
         function requestTiles(tiles, t, z) {
             // see renderCanvas guard
-            if (model.get('_render_backend') === 'viv' && (model.get('_zarr_source') || {}).url) return;
+            if (model.get('_render_backend') === 'viv' && (model.get('_zarr_source') || {}).mode) return;
             const missing = tiles.filter(tile => !tileCache.has(tile.key) && !pendingTiles.has(tile.key));
             if (missing.length === 0) return;
             // Debounce: cancel any pending request and re-schedule with latest T/Z.
@@ -1041,10 +1041,10 @@
         }
 
         function renderCanvas() {
-            // Viv backend owns the canvas when a zarr URL is active; the
-            // Canvas2D draw path stands down. Inert on the default backend
-            // (these traits are undefined / empty there).
-            if (model.get('_render_backend') === 'viv' && (model.get('_zarr_source') || {}).url) return;
+            // Viv backend owns the canvas when a zarr source (URL or kernel
+            // bridge) is active; the Canvas2D draw path stands down. Inert on
+            // the default backend (these traits are undefined / empty there).
+            if (model.get('_render_backend') === 'viv' && (model.get('_zarr_source') || {}).mode) return;
             const imgWidth = model.get('width');
             const imgHeight = model.get('height');
 
