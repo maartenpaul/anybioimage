@@ -25,29 +25,38 @@ _THUMBNAIL_MAX = 512  # Max dimension for tile-mode thumbnail (used as baseImage
 
 _ZARR_SUFFIXES = (".zarr", ".ome.zarr")
 
-_URL_SCHEMES = ("http://", "https://", "s3://", "gs://", "file://")
+_HTTP_SCHEMES = ("http://", "https://")
+_KERNEL_SCHEMES = ("file://", "s3://", "gs://", "gcs://", "az://", "abfs://")
+
+
+def _strip_zarr_suffix_candidate(s: str) -> str:
+    return s.split("?", 1)[0].split("#", 1)[0].rstrip("/").lower()
 
 
 def _looks_like_zarr_url(s) -> bool:
-    """Return True only for strings that are BOTH a URL (with an explicit
-    scheme the browser can fetch from) AND point at a .zarr path.
+    """True for http(s) strings pointing at a ``.zarr`` path — the only stores
+    the browser can fetch directly (Viv path on the viv backend)."""
+    if not isinstance(s, str) or not s.lower().startswith(_HTTP_SCHEMES):
+        return False
+    return _strip_zarr_suffix_candidate(s).endswith(_ZARR_SUFFIXES)
 
-    Filesystem paths ending in `.zarr` are NOT URLs — the browser cannot
-    fetch them. Those go through the bioio path instead.
 
-    Note: `s3://`/`gs://`/`file://` are recognised here, but the Python-side
-    metadata probe (`_fetch_zarr_ome_metadata`) only speaks http(s); a viv
-    load of those schemes raises in the probe and falls back to bioio. The
-    browser loader may still handle http(s)-proxied stores. Practically,
-    remote OME-Zarr over http(s) is the supported viv path today.
-    """
-    if not isinstance(s, str):
+def _looks_like_zarr_path(s) -> bool:
+    """True for ``.zarr`` inputs only the kernel can open: local paths
+    (``str``/``Path``) and fsspec URLs (``file://``, ``s3://``, ``gs://`` …).
+    These go through the chunk bridge on the viv backend, bioio on Canvas2D."""
+    from pathlib import Path
+
+    if isinstance(s, Path):
+        s = str(s)
+    if not isinstance(s, str) or not s:
         return False
     lower = s.lower()
-    if not lower.startswith(_URL_SCHEMES):
+    if lower.startswith(_HTTP_SCHEMES):
         return False
-    stripped = s.split("?", 1)[0].split("#", 1)[0].rstrip("/").lower()
-    return stripped.endswith(_ZARR_SUFFIXES)
+    if "://" in lower and not lower.startswith(_KERNEL_SCHEMES):
+        return False
+    return _strip_zarr_suffix_candidate(s).endswith(_ZARR_SUFFIXES)
 
 
 def _channel_settings_from_omero(ome: dict, dim_c: int, dtype=None) -> list[dict]:
@@ -185,15 +194,26 @@ class ImageLoadingMixin:
         - current_scene: Current scene name (traitlet)
     """
 
-    def set_image(self, data, headers: dict | None = None):
-        """Set the base image from a numpy array, BioImage object, or
-        (URL-schemed) OME-Zarr URL string.
+    def set_image(self, data, headers: dict | None = None, storage_options: dict | None = None):
+        """Set the base image from a numpy array, BioImage object, OME-Zarr
+        path/URL, or ``zarr.Group``.
 
         Args:
-            data: numpy array, BioImage, or ``http(s)/s3/gs/file`` URL ending
-                  in ``.zarr`` / ``.ome.zarr``.
-            headers: optional HTTP headers for zarr URLs (auth etc.).
+            data: numpy array, BioImage, ``zarr.Group``, local ``.zarr`` path
+                  (``str``/``Path``), ``s3://``/``gs://``/``file://`` zarr URL,
+                  or ``http(s)`` URL ending in ``.zarr`` / ``.ome.zarr``.
+            headers: optional HTTP headers for http(s) zarr URLs (auth etc.).
+            storage_options: optional fsspec options for ``s3://``/``gs://``
+                  stores (credentials, ``anon``, endpoints).
         """
+        import zarr
+
+        backend = getattr(self, "_render_backend", "canvas2d")
+
+        if isinstance(data, zarr.Group) or _looks_like_zarr_path(data):
+            self._set_zarr_path(data, storage_options)
+            return
+
         if _looks_like_zarr_url(data):
             if _zarr_url_is_plate(data, headers or {}):
                 raise ValueError(
@@ -201,7 +221,7 @@ class ImageLoadingMixin:
                     f"Use viewer.set_plate(url) instead of set_image(url) — "
                     f"it adds Well/FOV selectors for plate navigation."
                 )
-            if getattr(self, "_render_backend", "canvas2d") == "viv":
+            if backend == "viv":
                 try:
                     self._set_zarr_url(data, headers or {})
                     return
@@ -211,13 +231,37 @@ class ImageLoadingMixin:
                     )
             self._set_zarr_url_canvas2d(data)
             return
-        if getattr(self, "_render_backend", "canvas2d") == "viv":
+        if backend == "viv":
             logger.info("Non-zarr input on viv backend; rendering via Canvas2D pipeline.")
         # --- existing main dispatch, unchanged ---
         if hasattr(data, "dims") and hasattr(data, "dask_data"):
             self._set_bioimage(data)
         else:
             self._set_numpy_image(data)
+
+    def _set_zarr_path(self, data, storage_options: dict | None) -> None:
+        """Kernel-openable zarr (local / fsspec / Group): chunk bridge on viv,
+        bioio on Canvas2D. Plates raise; other viv failures fall back to bioio."""
+        import zarr
+
+        from .. import ngff
+
+        if getattr(self, "_render_backend", "canvas2d") == "viv":
+            try:
+                img = ngff.open_image(data, storage_options)
+            except ngff.PlateError as e:
+                raise ValueError(
+                    f"{e}. Use viewer.set_plate(path) instead of set_image(path) — "
+                    f"it adds Well/FOV selectors for plate navigation."
+                ) from e
+            except Exception as e:
+                logger.info("Viv chunk-bridge open failed (%s); falling back to Canvas2D", e)
+            else:
+                self._attach_bridge(img)
+                return
+        if isinstance(data, zarr.Group):
+            raise TypeError("zarr.Group input requires BioImageViewer(render_backend='viv')")
+        self._set_zarr_url_canvas2d(str(data))
 
     def _set_zarr_url(self, url: str, headers: dict) -> None:
         """Viv path: fetch OME metadata once, populate dim/channel traitlets,

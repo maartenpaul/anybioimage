@@ -246,3 +246,57 @@ def test_numpy_then_zarr_restores_zarr_source(viv_viewer):
     viv_viewer.set_image("https://example.org/img.ome.zarr")
     assert viv_viewer._zarr_source["url"] == "https://example.org/img.ome.zarr"
     assert viv_viewer.dim_t == 10  # dims repopulated from metadata
+
+
+def test_local_zarr_on_viv_attaches_bridge(_fake_viv_esm, v04_store):
+    v = BioImageViewer(render_backend="viv")
+    v.set_image(v04_store)
+    assert v._zarr_source["mode"] == "bridge"
+    assert (v.dim_t, v.dim_c, v.dim_z) == (2, 3, 2)
+    assert v._precompute_future is None and v.image_data == ""
+
+
+def test_local_zarr_group_on_viv(_fake_viv_esm, v04_store):
+    import zarr
+    v = BioImageViewer(render_backend="viv")
+    v.set_image(zarr.open_group(v04_store, mode="r"))
+    assert v._zarr_source["mode"] == "bridge"
+
+
+def test_local_zarr_on_canvas2d_uses_bioio(monkeypatch, v04_store):
+    v = BioImageViewer()
+    called = {}
+    monkeypatch.setattr(v, "_set_zarr_url_canvas2d", lambda p: called.setdefault("path", p))
+    v.set_image(v04_store)
+    assert called["path"] == v04_store and v._zarr_source == {}
+
+
+def test_local_plate_to_set_image_raises(_fake_viv_esm, plate_store):
+    v = BioImageViewer(render_backend="viv")
+    with pytest.raises(ValueError, match="set_plate"):
+        v.set_image(plate_store)
+    assert v._zarr_source == {}
+
+
+def test_local_zarr_open_failure_on_viv_falls_back(monkeypatch, caplog, _fake_viv_esm, tmp_path):
+    v = BioImageViewer(render_backend="viv")
+    called = {}
+    monkeypatch.setattr(v, "_set_zarr_url_canvas2d", lambda p: called.setdefault("path", p))
+    with caplog.at_level(logging.INFO):
+        v.set_image(str(tmp_path / "missing.zarr"))
+    assert called["path"] == str(tmp_path / "missing.zarr")
+    assert v._zarr_source == {}
+
+
+def test_zarr_group_on_canvas2d_is_type_error(v04_store):
+    import zarr
+    v = BioImageViewer()
+    with pytest.raises(TypeError, match="viv"):
+        v.set_image(zarr.open_group(v04_store, mode="r"))
+
+
+def test_bridge_then_url_switches_mode(viv_viewer, v04_store):
+    viv_viewer.set_image(v04_store)
+    assert viv_viewer._zarr_source["mode"] == "bridge"
+    viv_viewer.set_image("https://example.org/img.ome.zarr")
+    assert viv_viewer._zarr_source["mode"] == "url" and viv_viewer._bridge_image is None
