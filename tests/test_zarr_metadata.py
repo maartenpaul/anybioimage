@@ -7,6 +7,10 @@ import pytest
 import anybioimage.mixins.image_loading as il
 from anybioimage import BioImageViewer
 
+# Captured before the autouse _no_plate fixture stubs the module attribute, so
+# the direct unit tests below exercise the real implementation.
+_real_is_plate = il._zarr_url_is_plate
+
 FAKE_ZATTRS = {
     "multiscales": [{
         "axes": [{"name": n} for n in ("t", "c", "z", "y", "x")],
@@ -23,6 +27,13 @@ FAKE_ZATTRS = {
 
 def _fake_fetch(url, headers):
     return FAKE_ZATTRS, ["t", "c", "z", "y", "x"], [10, 2, 3, 2048, 1024], "uint16"
+
+
+@pytest.fixture(autouse=True)
+def _no_plate(monkeypatch):
+    # By default treat zarr URLs as single images. The plate guard otherwise does
+    # a real .zattrs network fetch; the dedicated plate test overrides this.
+    monkeypatch.setattr(il, "_zarr_url_is_plate", lambda url, headers: False)
 
 
 @pytest.fixture
@@ -137,6 +148,52 @@ def test_unusable_metadata_falls_back_to_bioio(monkeypatch, _fake_viv_esm):
     assert called["url"] == "https://example.org/plain.zarr"
     assert v._zarr_source == {}
     assert v.dim_t == 1  # untouched defaults, not a half-populated viewer
+
+
+def test_plate_url_raises_pointing_to_set_plate(monkeypatch, _fake_viv_esm):
+    # An HCS plate handed to set_image() must fail loudly with a pointer to
+    # set_plate(), not the cryptic bioio "multiscales" crash or a silent fallback.
+    monkeypatch.setattr(il, "_zarr_url_is_plate", lambda url, headers: True)
+    v = BioImageViewer(render_backend="viv")
+    fell_back = {}
+    monkeypatch.setattr(v, "_set_zarr_url_canvas2d", lambda url: fell_back.setdefault("url", url))
+    with pytest.raises(ValueError, match="set_plate"):
+        v.set_image("https://example.org/plate.zarr")
+    assert fell_back == {}  # did not silently route to the bioio path
+    assert v._zarr_source == {}
+
+
+def test_zarr_url_is_plate_detects_v04_and_v05(monkeypatch):
+    import json
+    import urllib.request
+    from io import BytesIO
+
+    samples = {
+        "https://x/plate.zarr/.zattrs": {"plate": {"wells": []}},        # v0.4
+        "https://x/plate5.zarr/.zattrs": {"ome": {"plate": {"wells": []}}},  # v0.5
+        "https://x/img.zarr/.zattrs": {"multiscales": [{}]},             # single image
+    }
+
+    class _Resp(BytesIO):
+        def __enter__(self): return self
+        def __exit__(self, *a): self.close()
+
+    def fake_urlopen(req, timeout=30):
+        return _Resp(json.dumps(samples[req.full_url]).encode())
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    assert _real_is_plate("https://x/plate.zarr", {}) is True
+    assert _real_is_plate("https://x/plate5.zarr", {}) is True
+    assert _real_is_plate("https://x/img.zarr", {}) is False
+
+
+def test_zarr_url_is_plate_swallows_network_errors(monkeypatch):
+    import urllib.request
+
+    def boom(req, timeout=30):
+        raise OSError("connection refused")
+    monkeypatch.setattr(urllib.request, "urlopen", boom)
+    assert _real_is_plate("https://x/whatever.zarr", {}) is False
 
 
 def test_render_ready_rearms_on_each_new_zarr_source(viv_viewer):

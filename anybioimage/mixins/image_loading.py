@@ -145,6 +145,28 @@ def _fetch_zarr_ome_metadata(url: str, headers: dict):
     return zattrs, axes, shape, dtype_str
 
 
+def _zarr_url_is_plate(url: str, headers: dict) -> bool:
+    """Return True if the zarr root at `url` is an HCS plate.
+
+    A plate root carries a ``plate`` key in its ``.zattrs`` (v0.4) or under
+    ``ome`` (v0.5) rather than a ``multiscales`` image block. The fetch runs
+    server-side (kernel ``urllib``), so it is unaffected by browser CORS.
+    Network/parse errors return False so the caller's normal path surfaces its
+    own error instead of masking it as "not a plate".
+    """
+    import json
+    import urllib.request
+
+    base = url.rstrip("/")
+    try:
+        req = urllib.request.Request(f"{base}/.zattrs", headers=headers or {})
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            zattrs = json.loads(resp.read().decode())
+    except Exception:
+        return False
+    return "plate" in zattrs or "plate" in (zattrs.get("ome") or {})
+
+
 def _thumbnail(arr: np.ndarray, max_size: int = _THUMBNAIL_MAX) -> np.ndarray:
     """Downsample array to fit within max_size using nearest-neighbor sampling."""
     h, w = arr.shape[:2]
@@ -196,6 +218,12 @@ class ImageLoadingMixin:
             headers: optional HTTP headers for zarr URLs (auth etc.).
         """
         if _looks_like_zarr_url(data):
+            if _zarr_url_is_plate(data, headers or {}):
+                raise ValueError(
+                    f"{data} is an HCS plate, not a single image. "
+                    f"Use viewer.set_plate(url) instead of set_image(url) — "
+                    f"it adds Well/FOV selectors for plate navigation."
+                )
             if getattr(self, "_render_backend", "canvas2d") == "viv":
                 try:
                     self._set_zarr_url(data, headers or {})
