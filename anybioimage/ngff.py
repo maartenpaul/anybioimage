@@ -205,8 +205,10 @@ def fetch_http_attrs(url: str, headers: dict | None) -> dict:
     except Exception as first:
         try:
             doc = _http_json(f"{base}/zarr.json", headers)
-        except Exception:
-            raise OSError(f"No .zattrs or zarr.json at {base}: {first}") from first
+        except Exception as second:
+            raise OSError(
+                f"Could not read group attrs at {base}: .zattrs -> {first!r}; zarr.json -> {second!r}"
+            ) from first
         return dict(doc.get("attributes") or {})
 
 

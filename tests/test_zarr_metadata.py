@@ -10,6 +10,7 @@ from anybioimage import BioImageViewer
 # Captured before the autouse _no_plate fixture stubs the module attribute, so
 # the direct unit tests below exercise the real implementation.
 _real_is_plate = il._zarr_url_is_plate
+_real_fetch = il._fetch_zarr_ome_metadata
 
 FAKE_ZATTRS = {
     "multiscales": [{
@@ -198,6 +199,33 @@ def test_zarr_url_is_plate_swallows_network_errors(monkeypatch):
         raise OSError("connection refused")
     monkeypatch.setattr(urllib.request, "urlopen", boom)
     assert _real_is_plate("https://x/whatever.zarr", {}) is False
+
+
+def test_real_probe_reads_v05_ome_block(monkeypatch):
+    import json
+    import urllib.request
+    from io import BytesIO
+    samples = {
+        "https://x/v5.zarr/zarr.json": {"zarr_format": 3, "node_type": "group", "attributes": {"ome": {
+            "version": "0.5",
+            "multiscales": [{"axes": [{"name": n} for n in ("c", "z", "y", "x")], "datasets": [{"path": "0"}]}],
+            "omero": {"channels": [{"label": "Nuc", "color": "0000ff", "window": {"min": 0, "max": 4095, "start": 5, "end": 900}}]},
+        }}},
+        "https://x/v5.zarr/0/zarr.json": {"shape": [1, 3, 64, 32], "data_type": "uint16"},
+    }
+    class _Resp(BytesIO):
+        def __enter__(self): return self
+        def __exit__(self, *a): self.close()
+    def fake_urlopen(req, timeout=30):
+        if req.full_url not in samples:
+            raise OSError("404")
+        return _Resp(json.dumps(samples[req.full_url]).encode())
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    ome, axes, shape, dtype = _real_fetch("https://x/v5.zarr", {})
+    assert ome["omero"]["channels"][0]["label"] == "Nuc"
+    assert axes == ["c", "z", "y", "x"] and shape == [1, 3, 64, 32] and dtype == "uint16"
+    chs = il._channel_settings_from_omero(ome, 1, dtype)
+    assert chs[0]["name"] == "Nuc" and chs[0]["color"] == "#0000ff"
 
 
 def test_render_ready_rearms_on_each_new_zarr_source(viv_viewer):

@@ -124,8 +124,8 @@ def _fetch_zarr_ome_metadata(url: str, headers: dict):
         if path is not None:
             try:
                 shape, dtype_str = ngff.fetch_http_array_meta(url, str(path), headers)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("array meta fetch failed for %s/%s: %s", url, path, e)
         if shape:
             axes = ngff.axes_from_multiscale(multiscales[0], len(shape))
     return ome, axes, shape, dtype_str
