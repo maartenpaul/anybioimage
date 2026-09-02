@@ -105,66 +105,43 @@ def _channel_settings_from_omero(ome: dict, dim_c: int, dtype=None) -> list[dict
 
 
 def _fetch_zarr_ome_metadata(url: str, headers: dict):
-    """Fetch `.zattrs` + level-0 `.zarray` from a zarr root URL.
+    """Fetch the OME block + level-0 array meta of an http(s) zarr root.
 
-    Returns ``(zattrs, axes, shape, dtype_str)`` where ``axes`` is the
-    multiscales axis-name list (e.g. ``["t","c","z","y","x"]``), ``shape`` is
-    the level-0 array shape in the same order, and ``dtype_str`` a numpy dtype
-    name (e.g. ``"uint16"``). Raises on network error / unparseable JSON.
+    Returns ``(ome, axes, shape, dtype_str)``. ``ome`` is the NGFF block
+    (top-level attrs for v0.4, ``attrs["ome"]`` for v0.5) so
+    ``_channel_settings_from_omero`` finds ``omero`` in both layouts.
+    Raises on network error / unparseable JSON.
     """
-    import json
-    import urllib.request
+    from .. import ngff
 
-    base = url.rstrip("/")
-
-    def _get_json(rel: str):
-        req = urllib.request.Request(f"{base}/{rel}", headers=headers or {})
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            return json.loads(resp.read().decode())
-
-    zattrs = _get_json(".zattrs")
-    multiscales = zattrs.get("multiscales") or []
-    axes, shape, dtype_raw = [], [], "<u2"
-    if multiscales:
-        axes = [a.get("name", "") for a in (multiscales[0].get("axes") or [])]
+    attrs = ngff.fetch_http_attrs(url, headers)
+    _, ome = ngff.parse_ome_attrs(attrs)
+    multiscales = ome.get("multiscales") or []
+    axes, shape, dtype_str = [], [], "uint16"
+    if isinstance(multiscales, list) and multiscales and isinstance(multiscales[0], dict):
         datasets = multiscales[0].get("datasets") or []
-        if datasets and datasets[0].get("path") is not None:
+        path = datasets[0].get("path") if datasets and isinstance(datasets[0], dict) else None
+        if path is not None:
             try:
-                zarray = _get_json(f"{datasets[0]['path']}/.zarray")
-                shape = list(zarray.get("shape", []))
-                dtype_raw = zarray.get("dtype", "<u2")
+                shape, dtype_str = ngff.fetch_http_array_meta(url, str(path), headers)
             except Exception:
                 pass
-    if not axes and shape:
-        # Pre-0.4 stores without an axes block: assume trailing-YX TCZYX order.
-        axes = ["t", "c", "z", "y", "x"][-len(shape):]
-    try:
-        dtype_str = str(np.dtype(dtype_raw))
-    except Exception:
-        dtype_str = "uint16"
-    return zattrs, axes, shape, dtype_str
+        if shape:
+            axes = ngff.axes_from_multiscale(multiscales[0], len(shape))
+    return ome, axes, shape, dtype_str
 
 
 def _zarr_url_is_plate(url: str, headers: dict) -> bool:
-    """Return True if the zarr root at `url` is an HCS plate.
+    """True if the http(s) zarr root is an HCS plate (v0.4 or v0.5 layout).
+    Network/parse errors return False so the caller's normal path surfaces
+    its own error instead of masking it as "not a plate"."""
+    from .. import ngff
 
-    A plate root carries a ``plate`` key in its ``.zattrs`` (v0.4) or under
-    ``ome`` (v0.5) rather than a ``multiscales`` image block. The fetch runs
-    server-side (kernel ``urllib``), so it is unaffected by browser CORS.
-    Network/parse errors return False so the caller's normal path surfaces its
-    own error instead of masking it as "not a plate".
-    """
-    import json
-    import urllib.request
-
-    base = url.rstrip("/")
     try:
-        req = urllib.request.Request(f"{base}/.zattrs", headers=headers or {})
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            zattrs = json.loads(resp.read().decode())
+        _, ome = ngff.parse_ome_attrs(ngff.fetch_http_attrs(url, headers or {}))
     except Exception:
         return False
-    return "plate" in zattrs or "plate" in (zattrs.get("ome") or {})
+    return ngff.is_plate_attrs(ome)
 
 
 def _thumbnail(arr: np.ndarray, max_size: int = _THUMBNAIL_MAX) -> np.ndarray:
@@ -284,7 +261,7 @@ class ImageLoadingMixin:
             # Re-arm the readiness flag so fixtures can block on the NEW image
             # rendering, not a stale True from a previous load.
             self._render_ready = False
-        self._zarr_source = {"url": url, "headers": headers or {}}
+        self._zarr_source = {"mode": "url", "url": url, "headers": headers or {}}
         logger.info("Viv backend: browser-direct zarr source set to %s", url)
 
     def _set_zarr_url_canvas2d(self, url: str) -> None:
@@ -972,7 +949,7 @@ class ImageLoadingMixin:
         navigation can outpace the background precompute thread.
         For in-RAM datasets, ±1 on both axes is sufficient (precompute covers the rest).
         """
-        if getattr(self, "_zarr_source", {}).get("url"):
+        if getattr(self, "_zarr_source", {}).get("mode"):
             return  # Viv owns rendering for zarr-URL images
         if self._bioimage is None:
             return
@@ -1019,7 +996,7 @@ class ImageLoadingMixin:
 
     def _update_slice(self):
         """Update the displayed slice based on current T, Z positions and channel settings."""
-        if getattr(self, "_zarr_source", {}).get("url"):
+        if getattr(self, "_zarr_source", {}).get("mode"):
             return  # Viv owns rendering for zarr-URL images
         if self._bioimage is None and self._full_array is None:
             return

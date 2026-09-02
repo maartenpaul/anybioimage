@@ -187,3 +187,40 @@ def open_image(src, storage_options: dict | None = None) -> NgffImage:
     )
     dtype = np.dtype(levels[0].dtype).newbyteorder("=")
     return NgffImage(group, version, axes, levels, dtype, channels)
+
+
+def _http_json(url: str, headers: dict | None):
+    req = urllib.request.Request(url, headers=headers or {})
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        return json.loads(resp.read().decode())
+
+
+def fetch_http_attrs(url: str, headers: dict | None) -> dict:
+    """Raw group attrs of an http(s) zarr root: ``.zattrs`` (v2) else
+    ``zarr.json["attributes"]`` (v3). Kernel-side ``urllib`` — no CORS, no
+    fsspec/aiohttp dependency. Raises ``OSError`` when neither exists."""
+    base = url.rstrip("/")
+    try:
+        return _http_json(f"{base}/.zattrs", headers)
+    except Exception as first:
+        try:
+            doc = _http_json(f"{base}/zarr.json", headers)
+        except Exception:
+            raise OSError(f"No .zattrs or zarr.json at {base}: {first}") from first
+        return dict(doc.get("attributes") or {})
+
+
+def fetch_http_array_meta(url: str, path: str, headers: dict | None) -> tuple[list[int], str]:
+    """``(shape, numpy dtype name)`` of array ``path`` under an http(s) zarr root."""
+    base = f"{url.rstrip('/')}/{path.strip('/')}"
+    try:
+        doc = _http_json(f"{base}/.zarray", headers)
+        raw = doc.get("dtype", "<u2")
+    except Exception:
+        doc = _http_json(f"{base}/zarr.json", headers)
+        raw = doc.get("data_type", "uint16")
+    try:
+        dtype = str(np.dtype(raw).newbyteorder("="))
+    except Exception:
+        dtype = "uint16"
+    return [int(s) for s in doc.get("shape", [])], dtype

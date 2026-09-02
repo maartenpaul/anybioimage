@@ -1,4 +1,5 @@
 """Lenient NGFF metadata reader."""
+import json
 from pathlib import Path
 
 import numpy as np
@@ -181,3 +182,47 @@ def test_open_image_on_plate_subgroup(plate_store):
     g = ngff.open_group(plate_store)
     img = ngff.open_image(g["A/1/0"])
     assert img.shape == (1, 1, 1, 32, 32)
+
+
+def _fake_http(monkeypatch, samples: dict):
+    """Patch urllib so `fetch_http_*` see `samples[url]` (dict → JSON, missing → OSError)."""
+    import urllib.request
+    from io import BytesIO
+
+    class _Resp(BytesIO):
+        def __enter__(self): return self
+        def __exit__(self, *a): self.close()
+
+    def fake_urlopen(req, timeout=30):
+        body = samples.get(req.full_url)
+        if body is None:
+            raise OSError(f"404 {req.full_url}")
+        return _Resp(json.dumps(body).encode())
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+
+
+def test_fetch_http_attrs_v2(monkeypatch):
+    _fake_http(monkeypatch, {"https://x/a.zarr/.zattrs": {"multiscales": [{"version": "0.4"}]}})
+    assert ngff.fetch_http_attrs("https://x/a.zarr/", {}) == {"multiscales": [{"version": "0.4"}]}
+
+
+def test_fetch_http_attrs_v3_zarr_json(monkeypatch):
+    _fake_http(monkeypatch, {"https://x/b.zarr/zarr.json": {"zarr_format": 3, "node_type": "group",
+                                                             "attributes": {"ome": {"version": "0.5"}}}})
+    assert ngff.fetch_http_attrs("https://x/b.zarr", {}) == {"ome": {"version": "0.5"}}
+
+
+def test_fetch_http_attrs_raises_when_neither(monkeypatch):
+    _fake_http(monkeypatch, {})
+    with pytest.raises(OSError):
+        ngff.fetch_http_attrs("https://x/none.zarr", {})
+
+
+def test_fetch_http_array_meta_v2_and_v3(monkeypatch):
+    _fake_http(monkeypatch, {
+        "https://x/a.zarr/0/.zarray": {"shape": [1, 2, 3, 4, 5], "dtype": ">u2"},
+        "https://x/b.zarr/0/zarr.json": {"shape": [6, 7], "data_type": "float32"},
+    })
+    assert ngff.fetch_http_array_meta("https://x/a.zarr", "0", {}) == ([1, 2, 3, 4, 5], "uint16")
+    assert ngff.fetch_http_array_meta("https://x/b.zarr", "0", {}) == ([6, 7], "float32")

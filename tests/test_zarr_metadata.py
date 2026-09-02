@@ -50,7 +50,9 @@ def viv_viewer(monkeypatch, _fake_viv_esm):
 
 def test_zarr_url_populates_dims_and_source(viv_viewer):
     viv_viewer.set_image("https://example.org/img.ome.zarr")
-    assert viv_viewer._zarr_source == {"url": "https://example.org/img.ome.zarr", "headers": {}}
+    assert viv_viewer._zarr_source == {
+        "mode": "url", "url": "https://example.org/img.ome.zarr", "headers": {},
+    }
     assert (viv_viewer.dim_t, viv_viewer.dim_c, viv_viewer.dim_z) == (10, 2, 3)
     assert (viv_viewer.height, viv_viewer.width) == (2048, 1024)
 
@@ -179,6 +181,8 @@ def test_zarr_url_is_plate_detects_v04_and_v05(monkeypatch):
         def __exit__(self, *a): self.close()
 
     def fake_urlopen(req, timeout=30):
+        if req.full_url not in samples:
+            raise OSError("404")
         return _Resp(json.dumps(samples[req.full_url]).encode())
 
     monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
