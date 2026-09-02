@@ -4,7 +4,7 @@ Protocol (anywidget custom messages):
   JS → Py  {"kind": "chunk", "requestId": int, "level": int, "t": int, "c": int, "z": int,
             "tx": int, "ty": int, "tileSize": int}
   Py → JS  {"kind": "chunk", "requestId": int, "ok": true, "w": int, "h": int, "dtype": str}
-           + buffers=[raw little-endian C-order bytes, h*w elements]
+           + buffers=[raw native-endian C-order bytes (little-endian on all supported platforms), h*w elements]
         or {"kind": "chunk", "requestId": int, "ok": false, "error": str}
 
 Performance rule: zarr decodes whole chunks, so a tile read costs the same as
@@ -69,9 +69,17 @@ class BridgeCache:
                     self.nbytes -= len(old[2])
                 self._d[key] = val
                 self.nbytes += len(val[2])
-            while self.nbytes > self.max_bytes and len(self._d) > 1:
-                _, old = self._d.popitem(last=False)
-                self.nbytes -= len(old[2])
+            self._evict_locked()
+
+    def set_max_bytes(self, max_bytes: int) -> None:
+        with self._lock:
+            self.max_bytes = int(max_bytes)
+            self._evict_locked()
+
+    def _evict_locked(self) -> None:
+        while self.nbytes > self.max_bytes and len(self._d) > 1:
+            _, old = self._d.popitem(last=False)
+            self.nbytes -= len(old[2])
 
     def clear(self) -> None:
         with self._lock:
@@ -92,6 +100,8 @@ def read_tile_block(img: ngff.NgffImage, level: int, t: int, c: int, z: int,
     range. If the enclosing block would exceed ``max_block_bytes`` only the
     requested plane is read.
     """
+    if tile_size <= 0:
+        raise ValueError(f"tile_size must be positive, got {tile_size}")
     if level < 0 or level >= len(img.levels):
         raise IndexError(f"level {level} out of range")
     arr = img.levels[level]
@@ -111,20 +121,24 @@ def read_tile_block(img: ngff.NgffImage, level: int, t: int, c: int, z: int,
             ranges.append((y0, y1))
         elif ax == "x":
             ranges.append((x0, x1))
-        else:
-            pos = int(wanted.get(ax, 0))
+        elif ax in wanted:
+            pos = int(wanted[ax])
             if pos < 0 or pos >= shape[i]:
                 raise IndexError(f"{ax}={pos} outside level {level} extent {shape[i]}")
             start = (pos // chunks[i]) * chunks[i]
             stop = min(start + chunks[i], shape[i])
             ranges.append((start, stop))
             block_elems *= stop - start
-    if block_elems * out_dtype.itemsize > max_block_bytes:
+        else:
+            # Unknown non-spatial axis (e.g. ndim>5 leading dims): pin to 0, no span.
+            ranges.append((0, 1))
+    src_itemsize = max(np.dtype(arr.dtype).itemsize, out_dtype.itemsize)
+    if block_elems * src_itemsize > max_block_bytes:
         ranges = [(int(wanted.get(ax, 0)), int(wanted.get(ax, 0)) + 1) if ax not in _SPATIAL else r
                   for ax, r in zip(axes, ranges)]
 
     block = np.asarray(arr[tuple(slice(a, b) for a, b in ranges)])
-    block = np.ascontiguousarray(block.astype(out_dtype, copy=False))
+    block = block.astype(out_dtype, copy=False)
 
     non_spatial = [i for i, ax in enumerate(axes) if ax not in _SPATIAL]
     out: dict[TileKey, TileValue] = {}
