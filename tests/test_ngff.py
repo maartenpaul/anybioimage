@@ -1,6 +1,7 @@
 """Lenient NGFF metadata reader."""
 from pathlib import Path
 
+import numpy as np
 import pytest
 import zarr
 
@@ -70,3 +71,75 @@ def test_axes_from_multiscale_defaults_to_trailing_tczyx():
     assert ngff.axes_from_multiscale({}, 3) == ["z", "y", "x"]                     # missing
     assert ngff.axes_from_multiscale({"axes": [{"name": "y"}]}, 5) == ["t", "c", "z", "y", "x"]  # length mismatch
     assert ngff.axes_from_multiscale({}, 6) == ["dim0", "t", "c", "z", "y", "x"]  # ndim > 5
+
+
+def test_open_image_v04(v04_store):
+    img = ngff.open_image(v04_store)
+    assert img.version == "0.4"
+    assert img.axes == ["t", "c", "z", "y", "x"]
+    assert [a.shape for a in img.levels] == [(2, 3, 2, 64, 96), (2, 3, 2, 32, 48)]
+    assert img.dtype == np.dtype("uint16") and img.dtype.isnative
+    assert [c["label"] for c in img.omero_channels] == ["Ch0", "Ch1", "Ch2"]
+    assert img.shape == (2, 3, 2, 64, 96)
+    assert (img.size("t"), img.size("c"), img.size("z"), img.size("y"), img.size("x")) == (2, 3, 2, 64, 96)
+
+
+def test_open_image_v05(v05_store):
+    img = ngff.open_image(v05_store)
+    assert img.version == "0.5"
+    assert len(img.levels) == 2 and img.levels[0].metadata.zarr_format == 3
+    assert img.omero_channels[0]["label"] == "C0"
+
+
+def test_open_image_sloppy_store_no_c_axis(v04_sloppy_store):
+    img = ngff.open_image(v04_sloppy_store)
+    assert img.axes == ["t", "z", "y", "x"]
+    assert img.size("c") == 1            # absent axis reads as size 1
+    assert img.omero_channels == []
+
+
+def test_open_image_skips_missing_dataset(tmp_path, caplog):
+    from tests.conftest import write_v04_image
+    path = write_v04_image(tmp_path / "x.zarr", n_levels=1)
+    g = zarr.open_group(path, mode="a")
+    ms = dict(g.attrs)["multiscales"]
+    ms[0]["datasets"].append({"path": "99"})
+    g.attrs["multiscales"] = ms
+    img = ngff.open_image(path)
+    assert len(img.levels) == 1
+    assert "99" in caplog.text
+
+
+def test_open_image_rejects_plain_zarr(tmp_path):
+    g = zarr.create_group(str(tmp_path / "plain.zarr"), zarr_format=2)
+    g.create_array("0", shape=(4, 4), dtype="uint8")
+    with pytest.raises(ValueError, match="multiscales"):
+        ngff.open_image(str(tmp_path / "plain.zarr"))
+
+
+def test_open_image_rejects_x_before_y(tmp_path):
+    from tests.conftest import write_v04_image
+    axes = [{"name": n} for n in ("t", "c", "z", "x", "y")]
+    path = write_v04_image(tmp_path / "xy.zarr", axes=axes, n_levels=1)
+    with pytest.raises(ValueError, match="y before x"):
+        ngff.open_image(path)
+
+
+def test_open_image_on_plate_raises_plate_error(plate_store):
+    with pytest.raises(ngff.PlateError, match="set_plate"):
+        ngff.open_image(plate_store)
+
+
+def test_is_plate_and_layout(plate_store, v04_store):
+    assert ngff.is_plate(ngff.open_group(plate_store)) is True
+    assert ngff.is_plate(ngff.open_group(v04_store)) is False
+    layout = ngff.plate_layout(ngff.open_group(plate_store))
+    assert [w["path"] for w in layout["wells"]] == ["A/1", "B/2"]
+    with pytest.raises(ValueError, match="plate"):
+        ngff.plate_layout(ngff.open_group(v04_store))
+
+
+def test_open_image_on_plate_subgroup(plate_store):
+    g = ngff.open_group(plate_store)
+    img = ngff.open_image(g["A/1/0"])
+    assert img.shape == (1, 1, 1, 32, 32)

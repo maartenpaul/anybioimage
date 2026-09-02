@@ -96,3 +96,78 @@ def axes_from_multiscale(multiscale: dict, ndim: int) -> list[str]:
             return _DEFAULT_AXES[-ndim:]
         return [f"dim{i}" for i in range(ndim - 5)] + _DEFAULT_AXES
     return names
+
+
+@dataclass
+class NgffImage:
+    """One multiscale image: native pyramid levels plus the metadata a viewer needs."""
+
+    group: zarr.Group
+    version: str
+    axes: list[str]                       # e.g. ["t", "c", "z", "y", "x"]; y always precedes x
+    levels: list[zarr.Array]              # level 0 first (full resolution)
+    dtype: np.dtype                       # level-0 dtype, native byte order
+    omero_channels: list[dict] = field(default_factory=list)
+
+    @property
+    def shape(self) -> tuple[int, ...]:
+        return tuple(int(s) for s in self.levels[0].shape)
+
+    def size(self, axis: str) -> int:
+        """Extent along ``axis``; 1 when the store has no such axis."""
+        return self.shape[self.axes.index(axis)] if axis in self.axes else 1
+
+
+def is_plate_attrs(ome: dict) -> bool:
+    return isinstance(ome.get("plate"), dict)
+
+
+def is_plate(group: zarr.Group) -> bool:
+    return is_plate_attrs(read_ome_attrs(group)[1])
+
+
+def plate_layout(group: zarr.Group) -> dict:
+    """The raw ``plate`` block (rows / columns / wells) of an HCS plate group."""
+    _, ome = read_ome_attrs(group)
+    if not is_plate_attrs(ome):
+        raise ValueError("No HCS plate metadata in group")
+    return ome["plate"]
+
+
+def open_image(src, storage_options: dict | None = None) -> NgffImage:
+    """Open a multiscale image group leniently.
+
+    Raises ``PlateError`` for HCS plate roots and ``ValueError`` when no usable
+    multiscale arrays exist.
+    """
+    group = open_group(src, storage_options)
+    version, ome = read_ome_attrs(group)
+    if is_plate_attrs(ome):
+        raise PlateError(f"{src!r} is an HCS plate, not a single image; use viewer.set_plate()")
+    multiscales = ome.get("multiscales") or []
+    if not isinstance(multiscales, list) or not multiscales or not isinstance(multiscales[0], dict):
+        raise ValueError(f"No multiscales metadata in {src!r}")
+    ms = multiscales[0]
+
+    levels: list[zarr.Array] = []
+    for ds in ms.get("datasets") or []:
+        path = ds.get("path") if isinstance(ds, dict) else ds
+        if path is None:
+            continue
+        try:
+            node = group[str(path)]
+        except (KeyError, FileNotFoundError):
+            logger.warning("multiscales dataset %r missing in store; skipped", path)
+            continue
+        if isinstance(node, zarr.Array):
+            levels.append(node)
+    if not levels:
+        raise ValueError(f"multiscales in {src!r} lists no readable arrays")
+
+    axes = axes_from_multiscale(ms, levels[0].ndim)
+    if "y" not in axes or "x" not in axes or axes.index("y") > axes.index("x"):
+        raise ValueError(f"Unsupported axes order {axes}: need y before x")
+    omero = ome.get("omero") or {}
+    channels = [c for c in (omero.get("channels") or []) if isinstance(c, dict)]
+    dtype = np.dtype(levels[0].dtype).newbyteorder("=")
+    return NgffImage(group, version, axes, levels, dtype, channels)
