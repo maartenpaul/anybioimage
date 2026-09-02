@@ -15,7 +15,6 @@ import json
 import logging
 import urllib.request
 from dataclasses import dataclass, field
-from pathlib import Path
 
 import numpy as np
 import zarr
