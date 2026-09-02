@@ -16,7 +16,7 @@ def _fill(shape):
     return (np.arange(int(np.prod(shape)), dtype=np.uint32) % 60000).astype(np.uint16).reshape(shape)
 
 
-def _write_levels(group, shape, chunks, n_levels, zarr_format):
+def _write_levels(group, shape, chunks, n_levels):
     """Write level 0 = arange data, each next level = ::2 in y/x. Returns dataset paths."""
     data = _fill(shape)
     paths = []
@@ -36,7 +36,7 @@ def write_v04_image(path, shape=(2, 3, 2, 64, 96), chunks=(1, 1, 1, 32, 32),
                     axes=AXES_TCZYX, n_levels=2, omero=True, empty_transforms=False):
     """NGFF v0.4 image in a zarr v2 store (attrs at top level)."""
     g = zarr.create_group(str(path), zarr_format=2)
-    paths = _write_levels(g, shape, chunks, n_levels, 2)
+    paths = _write_levels(g, shape, chunks, n_levels)
     datasets = []
     for i, p in enumerate(paths):
         ds = {"path": p}
@@ -59,7 +59,7 @@ def write_v04_image(path, shape=(2, 3, 2, 64, 96), chunks=(1, 1, 1, 32, 32),
 def write_v05_image(path, shape=(2, 3, 2, 64, 96), chunks=(1, 1, 1, 32, 32), n_levels=2):
     """NGFF v0.5 image in a zarr v3 store (attrs under `ome`)."""
     g = zarr.create_group(str(path), zarr_format=3)
-    paths = _write_levels(g, shape, chunks, n_levels, 3)
+    paths = _write_levels(g, shape, chunks, n_levels)
     g.attrs.update({"ome": {
         "version": "0.5",
         "multiscales": [{
@@ -91,7 +91,7 @@ def write_v04_plate(path, wells=("A/1", "B/2"), fovs=("0", "1")):
         wg.attrs.update({"well": {"images": [{"path": f} for f in fovs]}})
         for f in fovs:
             ig = wg.create_group(f)
-            paths = _write_levels(ig, (1, 1, 1, 32, 32), (1, 1, 1, 16, 16), 1, 2)
+            paths = _write_levels(ig, (1, 1, 1, 32, 32), (1, 1, 1, 16, 16), 1)
             ig.attrs.update({"multiscales": [{"version": "0.4", "axes": AXES_TCZYX,
                                               "datasets": [{"path": p} for p in paths]}]})
     return str(path)

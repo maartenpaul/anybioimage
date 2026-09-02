@@ -41,7 +41,12 @@ def parse_ome_attrs(attrs: dict) -> tuple[str, dict]:
     if isinstance(ome, dict) and ome:
         return str(ome.get("version") or "0.5"), ome
     multiscales = attrs.get("multiscales") or []
-    if multiscales and isinstance(multiscales[0], dict) and multiscales[0].get("version"):
+    if (
+        isinstance(multiscales, list)
+        and multiscales
+        and isinstance(multiscales[0], dict)
+        and multiscales[0].get("version")
+    ):
         return str(multiscales[0]["version"]), attrs
     plate = attrs.get("plate")
     if isinstance(plate, dict) and plate.get("version"):
@@ -55,15 +60,18 @@ def open_group(src, storage_options: dict | None = None) -> zarr.Group:
     if isinstance(src, zarr.Group):
         return src
     src = str(src)
+    is_remote = "://" in src and not src.lower().startswith("file://")
     kwargs = {"mode": "r"}
     if storage_options:
         kwargs["storage_options"] = storage_options
     try:
         return zarr.open_group(src, **kwargs)
     except ImportError as e:  # fsspec backend (s3fs / gcsfs / aiohttp) missing
-        raise ImportError(
-            f"Opening {src!r} needs an fsspec backend: pip install 'anybioimage[remote]' ({e})"
-        ) from e
+        if is_remote:
+            raise ImportError(
+                f"Opening {src!r} needs an fsspec backend: pip install 'anybioimage[remote]' ({e})"
+            ) from e
+        raise
 
 
 def read_ome_attrs(group: zarr.Group) -> tuple[str, dict]:
@@ -84,5 +92,7 @@ def axes_from_multiscale(multiscale: dict, ndim: int) -> list[str]:
         if name:
             names.append(str(name).lower())
     if len(names) != ndim:
-        return _DEFAULT_AXES[-ndim:]
+        if ndim <= 5:
+            return _DEFAULT_AXES[-ndim:]
+        return [f"dim{i}" for i in range(ndim - 5)] + _DEFAULT_AXES
     return names
