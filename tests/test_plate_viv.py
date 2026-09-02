@@ -1,7 +1,7 @@
 """Viv backend: remote-plate FOV switches update _zarr_source (no Python reload)."""
 import pytest
 
-from anybioimage import BioImageViewer
+from anybioimage import BioImageViewer, ngff
 
 
 @pytest.fixture
@@ -40,10 +40,17 @@ def test_local_plate_on_viv_uses_bridge(monkeypatch, _fake_viv_esm, plate_store)
 def test_local_plate_on_viv_falls_back_when_bridge_fails(monkeypatch, _fake_viv_esm, plate_store):
     v = BioImageViewer(render_backend="viv")
     called = {}
-    monkeypatch.setattr(v, "_attach_bridge", lambda img: (_ for _ in ()).throw(OSError("boom")))
+    monkeypatch.setattr(ngff, "open_image", lambda group: (_ for _ in ()).throw(OSError("boom")))
     monkeypatch.setattr(v, "_load_plate_image_bioio", lambda p: called.setdefault("path", p))
     v.set_plate(plate_store)
     assert called["path"] == f"{plate_store}/A/1/0"
+
+
+def test_local_plate_bridge_attach_bug_propagates(monkeypatch, _fake_viv_esm, plate_store):
+    v = BioImageViewer(render_backend="viv")
+    monkeypatch.setattr(v, "_attach_bridge", lambda img: (_ for _ in ()).throw(OSError("boom")))
+    with pytest.raises(OSError):
+        v.set_plate(plate_store)
 
 
 def test_canvas2d_local_plate_still_bioio(monkeypatch, plate_store):
@@ -75,3 +82,27 @@ def test_viv_plate_metadata_failure_falls_back(monkeypatch, _fake_viv_esm):
     monkeypatch.setattr(v, "_load_plate_image_bioio", lambda p: called.setdefault("path", p))
     v._load_plate_image("0")
     assert called["path"] == "https://example.org/plate.zarr/A/1/0"
+
+
+def test_set_plate_on_non_plate_raises(v04_store):
+    v = BioImageViewer()
+    with pytest.raises(ValueError, match="plate"):
+        v.set_plate(v04_store)
+
+
+def test_set_plate_passes_storage_options(monkeypatch, plate_store):
+    v = BioImageViewer()
+    captured = {}
+    real_open_group = ngff.open_group
+
+    def fake_open_group(src, storage_options=None):
+        captured["storage_options"] = storage_options
+        # Delegate without storage_options: plate_store is a local path, and
+        # zarr rejects storage_options for non-fsspec stores. We only need to
+        # confirm set_plate() forwards the argument, not that a local store
+        # accepts it.
+        return real_open_group(src)
+
+    monkeypatch.setattr(ngff, "open_group", fake_open_group)
+    v.set_plate(plate_store, storage_options={"anon": True})
+    assert captured["storage_options"] == {"anon": True}

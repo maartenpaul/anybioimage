@@ -2,6 +2,8 @@
 
 import logging
 
+from .. import ngff
+
 logger = logging.getLogger(__name__)
 
 
@@ -36,8 +38,6 @@ class PlateLoadingMixin:
             storage_options: fsspec options (e.g. credentials, ``anon``) for
                 remote stores (``s3://``, ``gs://``).
         """
-        from .. import ngff
-
         store = ngff.open_group(path, storage_options)
         plate_meta = ngff.plate_layout(store)   # raises ValueError if not a plate
 
@@ -95,8 +95,6 @@ class PlateLoadingMixin:
 
         # Read well metadata to get FOV list
         well_group = self._plate_store[well_path]
-        from .. import ngff
-
         _, well_ome = ngff.read_ome_attrs(well_group)
         well_meta = well_ome.get("well") or {"images": []}
 
@@ -149,16 +147,21 @@ class PlateLoadingMixin:
         image_path = f"{self._plate_path}/{self._current_well_path}/{fov}"
 
         if getattr(self, "_render_backend", "canvas2d") == "viv":
-            try:
-                if str(self._plate_path).lower().startswith(("http://", "https://")):
+            if str(self._plate_path).lower().startswith(("http://", "https://")):
+                try:
                     self._set_zarr_url(image_path, {})
+                    return
+                except Exception as e:
+                    logger.info("Viv plate FOV load failed (%s); falling back to bioio", e)
+            else:
+                group = self._plate_store[f"{self._current_well_path}/{fov}"]
+                try:
+                    img = ngff.open_image(group)
+                except Exception as e:
+                    logger.info("Viv plate FOV open failed (%s); falling back to bioio", e)
                 else:
-                    from .. import ngff
-
-                    self._attach_bridge(ngff.open_image(self._plate_store[f"{self._current_well_path}/{fov}"]))
-                return
-            except Exception as e:
-                logger.info("Viv plate FOV load failed (%s); falling back to bioio", e)
+                    self._attach_bridge(img)
+                    return
 
         self._load_plate_image_bioio(image_path)
 
