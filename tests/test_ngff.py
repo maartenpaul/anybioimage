@@ -107,7 +107,45 @@ def test_open_image_skips_missing_dataset(tmp_path, caplog):
     g.attrs["multiscales"] = ms
     img = ngff.open_image(path)
     assert len(img.levels) == 1
-    assert "99" in caplog.text
+    assert any("missing in store" in r.getMessage() and "99" in r.getMessage() for r in caplog.records)
+
+
+def test_open_image_skips_group_dataset(tmp_path, caplog):
+    from tests.conftest import write_v04_image
+    path = write_v04_image(tmp_path / "grp.zarr", n_levels=1)
+    g = zarr.open_group(path, mode="a")
+    g.create_group("sub")
+    ms = dict(g.attrs)["multiscales"]
+    ms[0]["datasets"].append({"path": "sub"})
+    g.attrs["multiscales"] = ms
+    img = ngff.open_image(path)
+    assert len(img.levels) == 1
+    assert any("not an array" in r.getMessage() for r in caplog.records)
+
+
+def test_open_image_skips_duplicate_and_mismatched_ndim(tmp_path, caplog):
+    from tests.conftest import write_v04_image
+    path = write_v04_image(tmp_path / "dup.zarr", n_levels=1)
+    g = zarr.open_group(path, mode="a")
+    g.create_array("flat", shape=(8, 8), dtype="uint16")
+    ms = dict(g.attrs)["multiscales"]
+    ms[0]["datasets"].append({"path": "0"})
+    ms[0]["datasets"].append({"path": "flat"})
+    g.attrs["multiscales"] = ms
+    img = ngff.open_image(path)
+    assert len(img.levels) == 1
+    messages = [r.getMessage() for r in caplog.records]
+    assert any("listed twice" in m for m in messages)
+    assert any("ndim" in m for m in messages)
+
+
+def test_open_image_tolerates_non_dict_omero(tmp_path):
+    from tests.conftest import write_v04_image
+    path = write_v04_image(tmp_path / "badomero.zarr", n_levels=1)
+    g = zarr.open_group(path, mode="a")
+    g.attrs["omero"] = ["bad"]
+    img = ngff.open_image(path)
+    assert img.omero_channels == []
 
 
 def test_open_image_rejects_plain_zarr(tmp_path):

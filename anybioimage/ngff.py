@@ -106,7 +106,7 @@ class NgffImage:
     version: str
     axes: list[str]                       # e.g. ["t", "c", "z", "y", "x"]; y always precedes x
     levels: list[zarr.Array]              # level 0 first (full resolution)
-    dtype: np.dtype                       # level-0 dtype, native byte order
+    dtype: np.dtype                       # level-0 dtype in NATIVE byte order — reads must be cast (arr.astype(img.dtype)) before .tobytes()
     omero_channels: list[dict] = field(default_factory=list)
 
     @property
@@ -150,6 +150,7 @@ def open_image(src, storage_options: dict | None = None) -> NgffImage:
     ms = multiscales[0]
 
     levels: list[zarr.Array] = []
+    seen_paths: set[str] = set()
     for ds in ms.get("datasets") or []:
         path = ds.get("path") if isinstance(ds, dict) else ds
         if path is None:
@@ -159,15 +160,30 @@ def open_image(src, storage_options: dict | None = None) -> NgffImage:
         except (KeyError, FileNotFoundError):
             logger.warning("multiscales dataset %r missing in store; skipped", path)
             continue
-        if isinstance(node, zarr.Array):
-            levels.append(node)
+        if not isinstance(node, zarr.Array):
+            logger.warning("multiscales dataset %r is not an array; skipped", path)
+            continue
+        if levels and node.ndim != levels[0].ndim:
+            logger.warning(
+                "multiscales dataset %r has ndim %d != %d; skipped",
+                path, node.ndim, levels[0].ndim,
+            )
+            continue
+        if str(path) in seen_paths:
+            logger.warning("multiscales dataset %r listed twice; skipped", path)
+            continue
+        seen_paths.add(str(path))
+        levels.append(node)
     if not levels:
         raise ValueError(f"multiscales in {src!r} lists no readable arrays")
 
     axes = axes_from_multiscale(ms, levels[0].ndim)
     if "y" not in axes or "x" not in axes or axes.index("y") > axes.index("x"):
         raise ValueError(f"Unsupported axes order {axes}: need y before x")
-    omero = ome.get("omero") or {}
-    channels = [c for c in (omero.get("channels") or []) if isinstance(c, dict)]
+    omero = ome.get("omero")
+    channels = (
+        [c for c in (omero.get("channels") or []) if isinstance(c, dict)]
+        if isinstance(omero, dict) else []
+    )
     dtype = np.dtype(levels[0].dtype).newbyteorder("=")
     return NgffImage(group, version, axes, levels, dtype, channels)
