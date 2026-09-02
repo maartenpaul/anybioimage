@@ -26,14 +26,13 @@ const VIV_TO_ARRAY = {
 
 let _nextRequestId = 1;
 
-// JS-side LRU tile cache cap. Each entry is a {data, width, height} object.
-// For a 5T×3Z×3C image at 512px tiles this is 45 tiles total; 512 is
-// comfortably above the worst-case for a single viewer session.
-const JS_TILE_LRU_CAP = 512;
-
 /**
  * anywidget delivers buffers as ArrayBuffer or DataView depending on the
  * transport. Build a typed-array view of the correct length in either case.
+ * DataViews from anywidget/Jupyter can start at an arbitrary byteOffset —
+ * constructing a typed array directly over a misaligned offset throws
+ * RangeError, so we copy (via ArrayBuffer#slice) whenever the offset or
+ * length isn't a multiple of the element size.
  */
 function toTypedArray(buf, Ctor) {
   if (!buf) return new Ctor(0);
@@ -43,8 +42,12 @@ function toTypedArray(buf, Ctor) {
   // ArrayBuffer view (DataView or TypedArray).
   const backing = buf.buffer;
   const offset = buf.byteOffset | 0;
-  const length = (buf.byteLength | 0) / Ctor.BYTES_PER_ELEMENT;
-  return new Ctor(backing, offset, length);
+  const bytes = buf.byteLength | 0;
+  const bpe = Ctor.BYTES_PER_ELEMENT;
+  if (offset % bpe !== 0 || bytes % bpe !== 0) {
+    return new Ctor(backing.slice(offset, offset + bytes - (bytes % bpe)));
+  }
+  return new Ctor(backing, offset, bytes / bpe);
 }
 
 /**
@@ -56,13 +59,17 @@ function tileKey(t, c, z, level, tx, ty, tile) {
 }
 
 export class AnywidgetPixelSource {
-  constructor(model, { shape, dtype, tileSize = 512, level = 0, labels }) {
+  constructor(model, {
+    shape, dtype, tileSize = 512, level = 0, labels, cacheSize = 128,
+  }) {
     this._model = model;
     this._level = level;
     this._tileSize = tileSize;
     this._dtype = dtype;
     this._shape = shape;
     this._labels = labels || ['t', 'c', 'z', 'y', 'x'];
+    // Per-level tile cache cap; Task 10 divides one shared budget across levels.
+    this._cacheSize = cacheSize;
     this._pending = new Map();
 
     // Deck.gl calls getTile once per visible tile per frame — often dozens at
@@ -109,8 +116,11 @@ export class AnywidgetPixelSource {
         return;
       }
 
-      // Success: build tile, cache it, resolve all waiters.
-      const Ctor = VIV_TO_ARRAY[this._dtype] || Uint8Array;
+      // Success: build tile, cache it, resolve all waiters. Honor the reply's
+      // own dtype — Python may coerce the array (e.g. float64 → float32)
+      // independently of the `dtype` this source was constructed with.
+      const Ctor = VIV_TO_ARRAY[AnywidgetPixelSource.dtypeFromPython(content.dtype)]
+        || VIV_TO_ARRAY[this._dtype] || Uint8Array;
       const tile = {
         data: toTypedArray(buffers && buffers[0], Ctor),
         width: content.w,
@@ -120,7 +130,7 @@ export class AnywidgetPixelSource {
       if (cacheKey) {
         this._tileCache.delete(cacheKey);   // re-insert at end (LRU touch)
         this._tileCache.set(cacheKey, tile);
-        if (this._tileCache.size > JS_TILE_LRU_CAP) {
+        if (this._tileCache.size > this._cacheSize) {
           this._tileCache.delete(this._tileCache.keys().next().value);
         }
 
@@ -199,7 +209,9 @@ export class AnywidgetPixelSource {
             const idx = waiters.findIndex((w) => w.resolve === resolve);
             if (idx !== -1) waiters.splice(idx, 1);
           }
-          reject(new Error('aborted'));
+          const e = new Error('aborted');
+          e.name = 'AbortError';
+          reject(e);
         };
         const waiter = { resolve, reject };
         inFlightWaiters.push(waiter);
@@ -221,7 +233,9 @@ export class AnywidgetPixelSource {
       const onAbort = () => {
         this._pending.delete(requestId);
         // Leave _reqToKey + _inFlight so the response is still cached on arrival.
-        reject(new Error('aborted'));
+        const e = new Error('aborted');
+        e.name = 'AbortError';
+        reject(e);
       };
       if (signal) {
         if (signal.aborted) { this._reqToKey.delete(requestId); this._inFlight.delete(key); return onAbort(); }
@@ -249,13 +263,18 @@ export class AnywidgetPixelSource {
   }
 
   onTileError(err) {
-    if (err && err.message === 'aborted') return;
+    if (err && (err.name === 'AbortError' || err.message === 'aborted')) return;
     throw err;
   }
 
   async getRaster({ selection, signal }) {
-    const yLen = this._shape[this._labels.indexOf('y')];
-    const xLen = this._shape[this._labels.indexOf('x')];
+    const yi = this._labels.indexOf('y');
+    const xi = this._labels.indexOf('x');
+    if (yi < 0 || xi < 0) {
+      throw new Error('AnywidgetPixelSource: labels must contain y and x');
+    }
+    const yLen = this._shape[yi];
+    const xLen = this._shape[xi];
     const w = xLen; const h = yLen;
     const Ctor = VIV_TO_ARRAY[this._dtype] || Uint8Array;
     const out = new Ctor(w * h);
