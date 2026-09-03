@@ -23,11 +23,11 @@ uv pip install anybioimage
 
 ```bash
 uv pip install "anybioimage[all]"       # recommended
-uv pip install "anybioimage[complete]"  # includes SAM (Python 3.10–3.12)
+uv pip install "anybioimage[complete]"  # includes SAM (Python 3.11–3.12)
 ```
 
 !!! note "SAM and Python 3.13+"
-    SAM support requires PyTorch via `ultralytics`. Use Python 3.10–3.12 for SAM features.
+    SAM support requires PyTorch via `ultralytics`. Use Python 3.11–3.12 for SAM features.
 
 ## Usage in Jupyter
 

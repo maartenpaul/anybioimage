@@ -17,7 +17,7 @@ uv pip install anybioimage
 # With all recommended dependencies (excludes SAM/PyTorch)
 uv pip install "anybioimage[all]"
 
-# With SAM support (Python 3.10–3.12, requires PyTorch)
+# With SAM support (Python 3.11–3.12, requires PyTorch)
 uv pip install "anybioimage[complete]"
 ```
 
@@ -149,7 +149,7 @@ viewer.enable_sam(model_type="mobile_sam")  # ~40 MB, fastest
 viewer.enable_sam(model_type="sam_b")       # SAM base, ~375 MB
 ```
 
-Requires `uv pip install "anybioimage[sam]"` (Python 3.10–3.12).
+Requires `uv pip install "anybioimage[sam]"` (Python 3.11–3.12).
 
 ![](images/image_004.gif)
 
