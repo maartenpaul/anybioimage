@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] — v0.7.0-alpha
+
+### Added
+- Opt-in `render_backend="viv"`: remote OME-Zarr rendered via WebGL2 with
+  browser-direct chunk fetch (no Python tile round-trips). Main UI unchanged.
+- `set_image(url, headers=...)` accepts URL-schemed `.zarr`/`.ome.zarr` strings
+  on both backends (Canvas2D routes them through bioio).
+- HCS plates on the viv backend: FOV switching swaps the zarr subpath browser-side.
+- Viv backend: kernel chunk bridge renders local / `s3://` / `gs://` OME-Zarr stores and `zarr.Group` inputs of any size (zarr v2 + v3, NGFF v0.4/v0.5); chunk-aware tile cache (`bridge_cache_bytes`).
+- New `anybioimage.ngff` module: lenient OME-NGFF metadata reader used by every zarr path (replaces the urllib-only probe).
+- `set_image(..., storage_options=)` / `set_plate(..., storage_options=)` for fsspec credentials; new `remote` extra (s3fs, gcsfs).
+
+### Changed
+- Canvas2D ESM extracted verbatim to `anybioimage/frontend/viewer/src/canvas2d-chrome.js`
+  (served raw — behavior identical; no Node needed for the default backend).
+- `import zarr` in plate loading is now lazy — `import anybioimage` no longer
+  requires zarr to be installed.
+
+### Build
+- `anybioimage/frontend/viewer/` esbuild bundle for the viv backend; pre-built
+  bundle committed and shipped in the wheel (no Node at install time).
+- CI: bundle freshness + size gates (`.github/workflows/bundle.yml`).
+
 ## [0.3.1] - 2026-05-22
 
 ### Fixed

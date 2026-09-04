@@ -23,6 +23,147 @@ _EAGER_LOAD_BYTES = 2 * 1024 ** 3  # 2 GB
 
 _THUMBNAIL_MAX = 512  # Max dimension for tile-mode thumbnail (used as baseImage fallback)
 
+_ZARR_SUFFIXES = (".zarr", ".ome.zarr")
+
+_HTTP_SCHEMES = ("http://", "https://")
+_KERNEL_SCHEMES = ("file://", "s3://", "gs://", "gcs://", "az://", "abfs://")
+
+
+def _strip_zarr_suffix_candidate(s: str) -> str:
+    return s.split("?", 1)[0].split("#", 1)[0].rstrip("/").lower()
+
+
+def _points_into_zarr(s: str) -> bool:
+    """True if any path segment is a ``.zarr``/``.ome.zarr`` store.
+
+    Not just the last one: a plate FOV (``plate.zarr/B/2/8``), a labels group or
+    any other subgroup is a perfectly good image to open, and that is how HCS
+    field URLs are shared.
+    """
+    return any(part.endswith(_ZARR_SUFFIXES) for part in _strip_zarr_suffix_candidate(s).split("/"))
+
+
+def _looks_like_zarr_url(s) -> bool:
+    """True for http(s) strings pointing at a ``.zarr`` path — the only stores
+    the browser can fetch directly (Viv path on the viv backend)."""
+    if not isinstance(s, str) or not s.lower().startswith(_HTTP_SCHEMES):
+        return False
+    return _points_into_zarr(s)
+
+
+def _looks_like_zarr_path(s) -> bool:
+    """True for ``.zarr`` inputs only the kernel can open: local paths
+    (``str``/``Path``) and fsspec URLs (``file://``, ``s3://``, ``gs://`` …).
+    These go through the chunk bridge on the viv backend, bioio on Canvas2D."""
+    from pathlib import Path
+
+    if isinstance(s, Path):
+        s = str(s)
+    if not isinstance(s, str) or not s:
+        return False
+    lower = s.lower()
+    if lower.startswith(_HTTP_SCHEMES):
+        return False
+    if "://" in lower and not lower.startswith(_KERNEL_SCHEMES):
+        return False
+    return _points_into_zarr(s)
+
+
+def _channel_settings_from_omero(ome: dict, dim_c: int, dtype=None) -> list[dict]:
+    """Build channel_settings dicts from an OME-Zarr omero block (or defaults).
+
+    Produces a superset of the Canvas2D schema: the chrome reads
+    {name,color,visible,min,max,data_min,data_max}; the Viv layer additionally
+    reads {index,color_kind,lut,gamma}. min/max are normalized to [0,1] of the
+    data range, matching the Canvas2D convention.
+    """
+    dtype_min = dtype_max = None
+    if dtype is not None and np.issubdtype(np.dtype(dtype), np.integer):
+        info = np.iinfo(np.dtype(dtype))
+        dtype_min, dtype_max = float(info.min), float(info.max)
+    omero = ome.get("omero") or {}
+    omero_channels = omero.get("channels") or []
+    out = []
+    for i in range(dim_c):
+        src = omero_channels[i] if i < len(omero_channels) else {}
+        window = src.get("window") or {}
+        omero_min = float(window.get("min", 0.0))
+        omero_max = float(window.get("max", 65535.0))
+        if dtype_min is not None:
+            data_min, data_max = dtype_min, dtype_max
+        else:
+            data_min, data_max = omero_min, omero_max
+        start = float(window.get("start", omero_min))
+        end = float(window.get("end", omero_max))
+        # Normalize against the same data range stored in the dict, so the
+        # frontend's reconstruction data_min + v*(data_max-data_min) lands on
+        # the OMERO start/end intensities exactly.
+        span = max(data_max - data_min, 1.0)
+        vmin = max(0.0, (start - data_min) / span)
+        vmax = min(1.0, (end - data_min) / span)
+        color_hex = src.get("color")
+        if color_hex:
+            color = color_hex if color_hex.startswith("#") else f"#{color_hex}"
+        else:
+            # Same fallback as the Canvas2D path (_set_bioimage): a lone channel
+            # is greyscale, not tinted, and multichannel follows CHANNEL_COLORS —
+            # so a store without an omero block looks identical on both backends.
+            color = "#ffffff" if dim_c == 1 else CHANNEL_COLORS[i % len(CHANNEL_COLORS)]
+        out.append({
+            "index": i,
+            "name": src.get("label", f"Ch {i}"),
+            "visible": True,
+            "color_kind": "solid",
+            "color": color,
+            "lut": "viridis",
+            "data_min": data_min,
+            "data_max": data_max,
+            "min": vmin,
+            "max": vmax,
+            "gamma": 1.0,
+        })
+    return out
+
+
+def _fetch_zarr_ome_metadata(url: str, headers: dict):
+    """Fetch the OME block + level-0 array meta of an http(s) zarr root.
+
+    Returns ``(ome, axes, shape, dtype_str)``. ``ome`` is the NGFF block
+    (top-level attrs for v0.4, ``attrs["ome"]`` for v0.5) so
+    ``_channel_settings_from_omero`` finds ``omero`` in both layouts.
+    Raises on network error / unparseable JSON.
+    """
+    from .. import ngff
+
+    attrs = ngff.fetch_http_attrs(url, headers)
+    _, ome = ngff.parse_ome_attrs(attrs)
+    multiscales = ome.get("multiscales") or []
+    axes, shape, dtype_str = [], [], "uint16"
+    if isinstance(multiscales, list) and multiscales and isinstance(multiscales[0], dict):
+        datasets = multiscales[0].get("datasets") or []
+        path = datasets[0].get("path") if datasets and isinstance(datasets[0], dict) else None
+        if path is not None:
+            try:
+                shape, dtype_str = ngff.fetch_http_array_meta(url, str(path), headers)
+            except Exception as e:
+                logger.debug("array meta fetch failed for %s/%s: %s", url, path, e)
+        if shape:
+            axes = ngff.axes_from_multiscale(multiscales[0], len(shape))
+    return ome, axes, shape, dtype_str
+
+
+def _zarr_url_is_plate(url: str, headers: dict) -> bool:
+    """True if the http(s) zarr root is an HCS plate (v0.4 or v0.5 layout).
+    Network/parse errors return False so the caller's normal path surfaces
+    its own error instead of masking it as "not a plate"."""
+    from .. import ngff
+
+    try:
+        _, ome = ngff.parse_ome_attrs(ngff.fetch_http_attrs(url, headers or {}))
+    except Exception:
+        return False
+    return ngff.is_plate_attrs(ome)
+
 
 def _thumbnail(arr: np.ndarray, max_size: int = _THUMBNAIL_MAX) -> np.ndarray:
     """Downsample array to fit within max_size using nearest-neighbor sampling."""
@@ -65,18 +206,133 @@ class ImageLoadingMixin:
         - current_scene: Current scene name (traitlet)
     """
 
-    def set_image(self, data):
-        """Set the base image from a numpy array or BioImage object.
+    def set_image(self, data, headers: dict | None = None, storage_options: dict | None = None):
+        """Set the base image from a numpy array, BioImage object, OME-Zarr
+        path/URL, or ``zarr.Group``.
 
         Args:
-            data: Either a numpy array or a BioImage object.
-                  If BioImage, enables lazy loading for 5D data.
+            data: numpy array, BioImage, ``zarr.Group``, local ``.zarr`` path
+                  (``str``/``Path``), ``s3://``/``gs://``/``file://`` zarr URL,
+                  or ``http(s)`` URL ending in ``.zarr`` / ``.ome.zarr``.
+            headers: optional HTTP headers for http(s) zarr URLs (auth etc.).
+            storage_options: optional fsspec options for ``s3://``/``gs://``
+                  stores (credentials, ``anon``, endpoints).
         """
-        # Check if this is a BioImage object
+        import zarr
+
+        backend = getattr(self, "_render_backend", "canvas2d")
+
+        if isinstance(data, zarr.Group) or _looks_like_zarr_path(data):
+            self._set_zarr_path(data, storage_options, backend)
+            return
+
+        if _looks_like_zarr_url(data):
+            if _zarr_url_is_plate(data, headers or {}):
+                raise ValueError(
+                    f"{data} is an HCS plate, not a single image. "
+                    f"Use viewer.set_plate(url) instead of set_image(url) — "
+                    f"it adds Well/FOV selectors for plate navigation."
+                )
+            if backend == "viv":
+                try:
+                    self._set_zarr_url(data, headers or {})
+                    return
+                except Exception as e:
+                    logger.info(
+                        "Viv zarr metadata load failed (%s); falling back to Canvas2D", e
+                    )
+            self._set_zarr_url_canvas2d(data)
+            return
+        if backend == "viv":
+            logger.info("Non-zarr input on viv backend; rendering via Canvas2D pipeline.")
+        # --- existing main dispatch, unchanged ---
         if hasattr(data, "dims") and hasattr(data, "dask_data"):
             self._set_bioimage(data)
         else:
             self._set_numpy_image(data)
+
+    def _set_zarr_path(self, data, storage_options: dict | None, backend: str) -> None:
+        """Kernel-openable zarr (local / fsspec / Group): chunk bridge on viv,
+        bioio on Canvas2D. Plates raise; other viv failures fall back to bioio;
+        a missing fsspec backend (ImportError) is surfaced, not swallowed."""
+        import zarr
+
+        from .. import ngff
+
+        if backend == "viv":
+            try:
+                img = ngff.open_image(data, storage_options)
+            except ngff.PlateError as e:
+                raise ValueError(
+                    f"{e} — it adds Well/FOV selectors for plate navigation."
+                ) from e
+            except ImportError:
+                raise
+            except Exception as e:
+                logger.info("Viv chunk-bridge open failed (%s); falling back to Canvas2D", e)
+            else:
+                self._attach_bridge(img)
+                return
+        if isinstance(data, zarr.Group):
+            raise TypeError("zarr.Group input requires BioImageViewer(render_backend='viv')")
+        self._set_zarr_url_canvas2d(str(data), storage_options)
+
+    def _set_zarr_url(self, url: str, headers: dict) -> None:
+        """Viv path: fetch OME metadata once, populate dim/channel traitlets,
+        and hand chunk fetching + rendering to the browser via _zarr_source.
+        No precompute, no composites, no PNG encoding."""
+        url = url.rstrip("/")
+        zattrs, axes, shape, dtype_str = _fetch_zarr_ome_metadata(url, headers or {})
+        if not axes or not shape:
+            raise ValueError(
+                f"No usable multiscales axes/shape metadata at {url}; "
+                "not renderable via browser-direct zarr"
+            )
+
+        def _dim(name: str) -> int:
+            if name in axes:
+                i = axes.index(name)
+                if i < len(shape):
+                    return int(shape[i])
+            return 1
+
+        dim_c = _dim("c")
+        channels = _channel_settings_from_omero(zattrs, dim_c, dtype_str)
+
+        # Cancel any running Canvas2D precompute (same idiom as _start_precompute).
+        if getattr(self, "_precompute_event", None) is not None:
+            self._precompute_event.set()
+        self._precompute_future = None
+        self._full_array = None
+        self._bioimage = None
+        if hasattr(self, "_detach_bridge"):
+            self._detach_bridge()
+
+        with self.hold_trait_notifications():
+            self.dim_t = _dim("t")
+            self.dim_c = dim_c
+            self.dim_z = _dim("z")
+            self.height = _dim("y")
+            self.width = _dim("x")
+            self.current_t = 0
+            self.current_z = 0
+            self._channel_settings = channels
+            self.image_data = ""
+            # Re-arm the readiness flag so fixtures can block on the NEW image
+            # rendering, not a stale True from a previous load.
+            self._render_ready = False
+        self._zarr_source = {"mode": "url", "url": url, "headers": headers or {}}
+        logger.info("Viv backend: browser-direct zarr source set to %s", url)
+
+    def _set_zarr_url_canvas2d(self, url: str, storage_options: dict | None = None) -> None:
+        """Canvas2D path for zarr URLs: load through bioio as before.
+        ``storage_options`` (fsspec credentials/options for s3://, gs://, etc.)
+        is forwarded to bioio via ``fs_kwargs`` when both BioImage and the
+        ome-zarr reader accept it."""
+        import bioio_ome_zarr
+        from bioio import BioImage
+
+        self._set_bioimage(BioImage(url, reader=bioio_ome_zarr.Reader, fs_kwargs=storage_options or {}))
 
     def _set_numpy_image(self, data: np.ndarray):
         """Set the base image from a numpy array (any shape, up to 5D).
@@ -84,6 +340,10 @@ class ImageLoadingMixin:
         Shape inference: 2D→(1,1,1,Y,X); 3D with last dim ≤4 → (1,C,1,Y,X) treating as HWC;
         3D otherwise → (1,C,1,Y,X) treating as CYX; 4D → (1,C,Z,Y,X); 5D → TCZYX.
         """
+        if getattr(self, "_zarr_source", None):
+            self._zarr_source = {}
+            if hasattr(self, "_detach_bridge"):
+                self._detach_bridge()
         if not isinstance(data, np.ndarray):
             data = np.asarray(data)
 
@@ -100,10 +360,18 @@ class ImageLoadingMixin:
             arr = data[np.newaxis]                            # assume CZYX → (1,C,Z,Y,X)
         elif data.ndim == 5:
             arr = data                                        # assume TCZYX
-        else:
+        elif data.ndim > 5:
+            # Drop leading singleton-ish axes until it is TCZYX-shaped.
             while data.ndim > 5:
                 data = data[0]
             return self._set_numpy_image(data)
+        else:
+            # 0-d/1-d: not an image. Recursing here used to loop forever — a
+            # stray path string becomes a 0-d array and matched no branch.
+            raise ValueError(
+                f"Cannot display {data.ndim}-dimensional data of dtype {data.dtype!r}; "
+                "set_image() takes a 2-5D array, a BioImage, or an OME-Zarr path/URL"
+            )
 
         if not arr.flags["C_CONTIGUOUS"]:
             arr = np.ascontiguousarray(arr)
@@ -157,6 +425,10 @@ class ImageLoadingMixin:
         Args:
             img: A BioImage object from bioio
         """
+        if getattr(self, "_zarr_source", None):
+            self._zarr_source = {}
+            if hasattr(self, "_detach_bridge"):
+                self._detach_bridge()
         self._bioimage = img
         self._full_array = None
 
@@ -752,6 +1024,8 @@ class ImageLoadingMixin:
         navigation can outpace the background precompute thread.
         For in-RAM datasets, ±1 on both axes is sufficient (precompute covers the rest).
         """
+        if getattr(self, "_zarr_source", {}).get("mode"):
+            return  # Viv owns rendering for zarr-URL images
         if self._bioimage is None:
             return
 
@@ -797,6 +1071,8 @@ class ImageLoadingMixin:
 
     def _update_slice(self):
         """Update the displayed slice based on current T, Z positions and channel settings."""
+        if getattr(self, "_zarr_source", {}).get("mode"):
+            return  # Viv owns rendering for zarr-URL images
         if self._bioimage is None and self._full_array is None:
             return
 
@@ -985,6 +1261,8 @@ class ImageLoadingMixin:
 
     def _on_channel_settings_change(self, change):
         """Observer callback when channel settings change."""
+        if getattr(self, "_zarr_source", {}).get("mode"):
+            return  # Viv owns rendering for zarr-backed images
         if getattr(self, "_precompute_event", None) is not None:
             self._precompute_event.set()
         self._tile_cache.clear()

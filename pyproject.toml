@@ -4,7 +4,7 @@ version = "0.3.1"
 description = "Interactive image viewer widget for Jupyter/marimo with annotation tools and SAM integration"
 readme = "README.md"
 license = { text = "MIT" }
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 authors = [
     { name = "Maarten Paul" }
 ]
@@ -14,7 +14,6 @@ classifiers = [
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
@@ -28,6 +27,8 @@ dependencies = [
     "numpy>=1.20.0",
     "pandas>=1.3.0",
     "pillow>=9.0.0",
+    "bioio-ome-zarr",
+    "zarr>=3.0",
 ]
 
 [project.optional-dependencies]
@@ -41,6 +42,10 @@ bioio = [
     "bioio>=1.0.0",
     "bioio-tifffile>=1.0.0",
 ]
+remote = [
+    "s3fs>=2024.0",
+    "gcsfs>=2024.0",
+]
 dev = [
     "marimo>=0.19.0",
     "pytest>=7.0.0",
@@ -48,10 +53,10 @@ dev = [
     "ty>=0.0.1a0",
 ]
 all = [
-    "anybioimage[contours,bioio,dev]",
+    "anybioimage[contours,bioio,remote,dev]",
 ]
 complete = [
-    "anybioimage[sam,contours,bioio,dev]",
+    "anybioimage[sam,contours,bioio,remote,dev]",
 ]
 
 [project.urls]
@@ -62,19 +67,38 @@ Changelog = "https://github.com/maartenpaul/anybioimage/blob/main/CHANGELOG.md"
 Issues = "https://github.com/maartenpaul/anybioimage/issues"
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-jupyter-builder>=0.9"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["anybioimage"]
+exclude = [
+    "anybioimage/frontend/viewer/node_modules/",
+    "anybioimage/frontend/viewer/src/",
+    "anybioimage/frontend/viewer/package.json",
+    "anybioimage/frontend/viewer/package-lock.json",
+    "anybioimage/frontend/viewer/build.config.mjs",
+    "anybioimage/frontend/viewer/.gitignore",
+]
+
+[tool.hatch.build.targets.wheel.force-include]
+"anybioimage/frontend/viewer/dist/viewer-bundle.js" = "anybioimage/frontend/viewer/dist/viewer-bundle.js"
+# The default backend reads the chrome at runtime — it must ship even though src/ is excluded.
+"anybioimage/frontend/viewer/src/canvas2d-chrome.js" = "anybioimage/frontend/viewer/src/canvas2d-chrome.js"
+
+[tool.hatch.build.hooks.jupyter-builder]
+build-function = "hatch_jupyter_builder.npm_builder"
+ensured-targets = ["anybioimage/frontend/viewer/dist/viewer-bundle.js"]
+skip-if-exists = ["anybioimage/frontend/viewer/dist/viewer-bundle.js"]
+
+[tool.hatch.build.hooks.jupyter-builder.build-kwargs]
+path = "anybioimage/frontend/viewer"
+build_cmd = "build"
+npm = ["npm"]
 
 [tool.hatch.build.targets.sdist]
-include = [
-    "anybioimage/",
-    "README.md",
-    "LICENSE",
-    "pyproject.toml",
-]
+include = ["anybioimage/", "README.md", "LICENSE", "pyproject.toml"]
+exclude = ["anybioimage/frontend/viewer/node_modules/"]
 
 [dependency-groups]
 dev = [
@@ -86,7 +110,7 @@ dev = [
 
 [tool.ruff]
 line-length = 100
-target-version = "py310"
+target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "W"]
