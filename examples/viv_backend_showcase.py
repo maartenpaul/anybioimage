@@ -1,14 +1,3 @@
-# /// script
-# requires-python = ">=3.10"
-# dependencies = [
-#     "marimo",
-#     "anybioimage",
-#     "bioio",
-#     "bioio-ome-zarr",
-#     "numpy",
-# ]
-# ///
-
 import marimo
 
 __generated_with = "0.23.8"

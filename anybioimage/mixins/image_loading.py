@@ -350,10 +350,18 @@ class ImageLoadingMixin:
             arr = data[np.newaxis]                            # assume CZYX → (1,C,Z,Y,X)
         elif data.ndim == 5:
             arr = data                                        # assume TCZYX
-        else:
+        elif data.ndim > 5:
+            # Drop leading singleton-ish axes until it is TCZYX-shaped.
             while data.ndim > 5:
                 data = data[0]
             return self._set_numpy_image(data)
+        else:
+            # 0-d/1-d: not an image. Recursing here used to loop forever — a
+            # stray path string becomes a 0-d array and matched no branch.
+            raise ValueError(
+                f"Cannot display {data.ndim}-dimensional data of dtype {data.dtype!r}; "
+                "set_image() takes a 2-5D array, a BioImage, or an OME-Zarr path/URL"
+            )
 
         if not arr.flags["C_CONTIGUOUS"]:
             arr = np.ascontiguousarray(arr)

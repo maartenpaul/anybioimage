@@ -348,3 +348,18 @@ def test_no_omero_channel_colors_match_canvas2d():
 def test_omero_colors_still_win_over_defaults():
     ome = {"omero": {"channels": [{"label": "DAPI", "color": "0000ff"}]}}
     assert il._channel_settings_from_omero(ome, 1, "uint16")[0]["color"] == "#0000ff"
+
+
+@pytest.mark.parametrize("bad", ["not/an/image.txt", 42, np.zeros(()), np.arange(5)])
+def test_non_image_input_raises_instead_of_recursing(bad):
+    """A 0-d/1-d input (e.g. a stray path string) used to recurse until
+    RecursionError; it must fail with a message naming the accepted inputs."""
+    v = BioImageViewer()
+    with pytest.raises(ValueError, match="2-5D array"):
+        v.set_image(bad)
+
+
+def test_six_dimensional_array_is_squeezed_not_rejected():
+    v = BioImageViewer()
+    v.set_image(np.zeros((1, 2, 1, 2, 8, 8), dtype=np.uint8))
+    assert (v.height, v.width) == (8, 8)
