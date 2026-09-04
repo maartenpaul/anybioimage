@@ -168,6 +168,13 @@ viewer.set_plate("https://example.com/plate.zarr")  # well/FOV switching stays b
 
 viewer.set_image("/data/big.ome.zarr")                                        # local, any size
 viewer.set_image("s3://bucket/x.ome.zarr", storage_options={"anon": True})   # needs anybioimage[remote]
+
+# A single HCS field, on a non-AWS S3 endpoint (e.g. EBI BioImage Archive):
+viewer.set_image(
+    "s3://bioimaging-integrator-data/S-BIAD855/<uuid>/<uuid>.zarr/B/2/8",
+    storage_options={"anon": True,
+                     "client_kwargs": {"endpoint_url": "https://livingobjects.ebi.ac.uk"}},
+)
 ```
 
 Non-zarr inputs on the `viv` backend fall back to Canvas2D automatically (one info log).

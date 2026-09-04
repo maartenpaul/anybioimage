@@ -11,6 +11,7 @@ from anybioimage.mixins.image_loading import _looks_like_zarr_path, _looks_like_
     "https://example.com/my.ome.zarr",
     "https://example.com/my.ome.zarr/",
     "http://localhost:8000/plate.zarr",
+    "https://example.com/plate.ome.zarr/B/2/8",
     "https://example.com/MY.OME.ZARR",
     "https://example.com/my.zarr?versionId=abc123",
 ])
@@ -20,6 +21,11 @@ def test_http_urls_detected(source):
 
 
 @pytest.mark.parametrize("source", [
+    # Subgroups inside a store are images too: an HCS field is shared as
+    # <plate>.zarr/<row>/<col>/<field>, so the suffix can be mid-path.
+    "s3://bucket/plate.ome.zarr/B/2/8?anonymous=true",
+    "/data/plate.zarr/B/2/8",
+    "gs://bucket/x.zarr/labels/nuclei",
     "/tmp/my.ome.zarr",
     "./examples/image.zarr",
     "examples/image.zarr/",

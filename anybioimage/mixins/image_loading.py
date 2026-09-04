@@ -33,12 +33,22 @@ def _strip_zarr_suffix_candidate(s: str) -> str:
     return s.split("?", 1)[0].split("#", 1)[0].rstrip("/").lower()
 
 
+def _points_into_zarr(s: str) -> bool:
+    """True if any path segment is a ``.zarr``/``.ome.zarr`` store.
+
+    Not just the last one: a plate FOV (``plate.zarr/B/2/8``), a labels group or
+    any other subgroup is a perfectly good image to open, and that is how HCS
+    field URLs are shared.
+    """
+    return any(part.endswith(_ZARR_SUFFIXES) for part in _strip_zarr_suffix_candidate(s).split("/"))
+
+
 def _looks_like_zarr_url(s) -> bool:
     """True for http(s) strings pointing at a ``.zarr`` path — the only stores
     the browser can fetch directly (Viv path on the viv backend)."""
     if not isinstance(s, str) or not s.lower().startswith(_HTTP_SCHEMES):
         return False
-    return _strip_zarr_suffix_candidate(s).endswith(_ZARR_SUFFIXES)
+    return _points_into_zarr(s)
 
 
 def _looks_like_zarr_path(s) -> bool:
@@ -56,7 +66,7 @@ def _looks_like_zarr_path(s) -> bool:
         return False
     if "://" in lower and not lower.startswith(_KERNEL_SCHEMES):
         return False
-    return _strip_zarr_suffix_candidate(s).endswith(_ZARR_SUFFIXES)
+    return _points_into_zarr(s)
 
 
 def _channel_settings_from_omero(ome: dict, dim_c: int, dtype=None) -> list[dict]:
