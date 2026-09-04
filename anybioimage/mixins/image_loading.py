@@ -73,7 +73,6 @@ def _channel_settings_from_omero(ome: dict, dim_c: int, dtype=None) -> list[dict
         dtype_min, dtype_max = float(info.min), float(info.max)
     omero = ome.get("omero") or {}
     omero_channels = omero.get("channels") or []
-    default_palette = ["#ff0000", "#00ff00", "#0000ff", "#ff00ff", "#00ffff", "#ffff00"]
     out = []
     for i in range(dim_c):
         src = omero_channels[i] if i < len(omero_channels) else {}
@@ -96,7 +95,10 @@ def _channel_settings_from_omero(ome: dict, dim_c: int, dtype=None) -> list[dict
         if color_hex:
             color = color_hex if color_hex.startswith("#") else f"#{color_hex}"
         else:
-            color = default_palette[i % len(default_palette)]
+            # Same fallback as the Canvas2D path (_set_bioimage): a lone channel
+            # is greyscale, not tinted, and multichannel follows CHANNEL_COLORS —
+            # so a store without an omero block looks identical on both backends.
+            color = "#ffffff" if dim_c == 1 else CHANNEL_COLORS[i % len(CHANNEL_COLORS)]
         out.append({
             "index": i,
             "name": src.get("label", f"Ch {i}"),

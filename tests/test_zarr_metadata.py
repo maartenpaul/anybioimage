@@ -331,3 +331,20 @@ def test_bridge_then_url_switches_mode(viv_viewer, v04_store):
     assert viv_viewer._zarr_source["mode"] == "bridge"
     viv_viewer.set_image("https://example.org/img.ome.zarr")
     assert viv_viewer._zarr_source["mode"] == "url" and viv_viewer._bridge_image is None
+
+
+def test_no_omero_channel_colors_match_canvas2d():
+    """A store without an omero block must look the same on both backends:
+    a lone channel is greyscale, multichannel follows CHANNEL_COLORS."""
+    from anybioimage.utils import CHANNEL_COLORS
+
+    single = il._channel_settings_from_omero({}, 1, "uint16")
+    assert [c["color"] for c in single] == ["#ffffff"]
+
+    multi = il._channel_settings_from_omero({}, 3, "uint16")
+    assert [c["color"] for c in multi] == CHANNEL_COLORS[:3]
+
+
+def test_omero_colors_still_win_over_defaults():
+    ome = {"omero": {"channels": [{"label": "DAPI", "color": "0000ff"}]}}
+    assert il._channel_settings_from_omero(ome, 1, "uint16")[0]["color"] == "#0000ff"
