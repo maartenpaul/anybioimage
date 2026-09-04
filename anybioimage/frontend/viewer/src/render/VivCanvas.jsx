@@ -72,13 +72,31 @@ export function VivCanvas({ model }) {
     };
   }, [zarrSource, model]);
 
+  // Identity of the image *extent*, not of the source objects: switching HCS
+  // wells/fields rebuilds the sources every time, but the field is the same
+  // size, and comparing wells at a fixed zoom is the point of plate browsing.
+  const extentKey = useMemo(() => {
+    if (!sources || !sources.length) return null;
+    const { shape = [], labels = [] } = sources[0];
+    return `${shape[labels.indexOf('y')]}x${shape[labels.indexOf('x')]}x${sources.length}`;
+  }, [sources]);
+
+  const viewStateRef = useRef(null);
+  const lastExtentRef = useRef(null);
+  useEffect(() => { viewStateRef.current = viewState; }, [viewState]);
+
   useEffect(() => {
     if (!sources || !sources.length) return;
+    // Keep the user's pan/zoom across same-size images (well/field switches);
+    // recentre only on first load or when the extent actually changes. Matches
+    // the Canvas2D chrome, which resets only on change:width/change:height.
+    if (viewStateRef.current && lastExtentRef.current === extentKey) return;
+    lastExtentRef.current = extentKey;
     setViewState(getDefaultInitialViewState(sources, { width, height }, 0));
     // Intentionally not depending on width/height: don't reset the user's
     // pan/zoom on container resize.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sources]);
+  }, [sources, extentKey]);
 
   const imageLayerProps = useMemo(() => {
     if (!sources || !sources.length) return null;
