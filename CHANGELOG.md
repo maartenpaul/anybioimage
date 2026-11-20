@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] — v0.7.0-alpha
+
+### Added
+- Opt-in `render_backend="viv"`: remote OME-Zarr rendered via WebGL2 with
+  browser-direct chunk fetch (no Python tile round-trips). Main UI unchanged.
+- `set_image(url, headers=...)` accepts URL-schemed `.zarr`/`.ome.zarr` strings
+  on both backends (Canvas2D routes them through bioio).
+- HCS plates on the viv backend: FOV switching swaps the zarr subpath browser-side.
+- Viv backend: kernel chunk bridge renders local / `s3://` / `gs://` OME-Zarr stores and `zarr.Group` inputs of any size (zarr v2 + v3, NGFF v0.4/v0.5); chunk-aware tile cache (`bridge_cache_bytes`).
+- New `anybioimage.ngff` module: lenient OME-NGFF metadata reader used by every zarr path (replaces the urllib-only probe).
+- `set_image(..., storage_options=)` / `set_plate(..., storage_options=)` for fsspec credentials; new `remote` extra (s3fs, gcsfs).
+
+### Changed
+- Canvas2D ESM extracted verbatim to `anybioimage/frontend/viewer/src/canvas2d-chrome.js`
+  (served raw — behavior identical; no Node needed for the default backend).
+- zarr support is an optional extra: `pip install "anybioimage[zarr]"` (`zarr>=3.1`,
+  `bioio>=3.0`, `bioio-ome-zarr>=3.0`). The base install no longer pulls zarr, dask or xarray.
+  Loading a zarr store without the extra raises an ImportError naming the install command.
+  Browser-direct `http(s)` URLs on the viv backend need no extra.
+- `requires-python` is now `>=3.11`.
+- Dependency floors raised to tested versions: `numpy>=1.26`, `pandas>=1.5`, `pillow>=9.2`.
+- An unreachable zarr host now raises `ConnectionError` naming the URL instead of a
+  bioio "unsupported file format" traceback.
+- Example notebooks point at the new IDR host (`livingobjects.ebi.ac.uk`).
+
+### Build
+- `anybioimage/frontend/viewer/` esbuild bundle for the viv backend; pre-built
+  bundle committed and shipped in the wheel (no Node at install time).
+- CI: bundle freshness + size gates (`.github/workflows/bundle.yml`).
+
 ## [0.3.1] - 2026-05-22
 
 ### Fixed

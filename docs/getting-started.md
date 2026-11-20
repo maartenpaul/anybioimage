@@ -15,19 +15,21 @@ uv pip install anybioimage
 
 | Extra | Adds | Notes |
 |-------|------|-------|
-| `bioio` | `bioio`, `bioio-tifffile` | TIFF and OME-Zarr file reading |
+| `bioio` | `bioio`, `bioio-tifffile` | TIFF file reading |
+| `zarr` | `zarr`, `bioio`, `bioio-ome-zarr` | OME-Zarr stores and HCS plates |
+| `remote` | zarr + `s3fs`, `gcsfs` | `s3://` / `gs://` OME-Zarr stores |
 | `contours` | `scipy` | Contour-only mask rendering |
 | `sam` | `ultralytics` | SAM segmentation (PyTorch required) |
-| `all` | bioio + contours | Recommended for most users |
+| `all` | bioio + zarr + remote + contours | Recommended for most users |
 | `complete` | all + sam | Full install |
 
 ```bash
 uv pip install "anybioimage[all]"       # recommended
-uv pip install "anybioimage[complete]"  # includes SAM (Python 3.10–3.12)
+uv pip install "anybioimage[complete]"  # includes SAM (Python 3.11–3.12)
 ```
 
 !!! note "SAM and Python 3.13+"
-    SAM support requires PyTorch via `ultralytics`. Use Python 3.10–3.12 for SAM features.
+    SAM support requires PyTorch via `ultralytics`. Use Python 3.11–3.12 for SAM features.
 
 ## Usage in Jupyter
 

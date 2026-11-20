@@ -25,7 +25,7 @@ uv pip install anybioimage
 # With BioImage file support and contour rendering (recommended)
 uv pip install "anybioimage[all]"
 
-# Including SAM (requires PyTorch, Python 3.10–3.12)
+# Including SAM (requires PyTorch, Python 3.11–3.12)
 uv pip install "anybioimage[complete]"
 ```
 

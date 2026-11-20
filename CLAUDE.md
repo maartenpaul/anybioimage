@@ -17,6 +17,7 @@ Interactive anywidget for visualizing biological images in Jupyter and marimo no
 ```
 anybioimage/
 ├── __init__.py           # Public API exports
+├── ngff.py                # Lenient OME-NGFF metadata reader (zarr-python 3)
 ├── utils.py              # Image processing helpers and color constants
 ├── viewer.py             # Main BioImageViewer widget (JS/CSS frontend + traitlets)
 └── mixins/
@@ -25,6 +26,7 @@ anybioimage/
     ├── mask_management.py # Mask layer operations
     ├── annotations.py    # Annotation data management (ROIs, polygons, points)
     ├── plate_loading.py  # HCS OME-Zarr plate loading (well/FOV selection)
+    ├── zarr_bridge.py    # Kernel-side chunk bridge serving zarr tiles to Viv
     └── sam_integration.py # SAM model integration
 ```
 
@@ -39,7 +41,7 @@ uv pip install -e ".[sam]"      # SAM model support (requires PyTorch)
 uv pip install -e ".[complete]" # Everything including SAM
 ```
 
-**Note:** The `sam` extra requires PyTorch and may not work on Python 3.13+. Use Python 3.10-3.12 for SAM features.
+**Note:** The `sam` extra requires PyTorch and may not work on Python 3.13+. Use Python 3.11-3.12 for SAM features.
 
 ## Usage
 
@@ -79,6 +81,45 @@ The main widget class with these capabilities:
 - `add_mask(labels, name, color, opacity)` - Add mask overlay layer
 - `enable_sam(model_type)` - Enable SAM segmentation
 - `rois_df`, `polygons_df`, `points_df` - Access annotation data as DataFrames
+
+### Rendering backends
+
+`BioImageViewer(render_backend="viv")` opts in to the Viv backend; default `canvas2d` is unchanged.
+
+**Viv** renders OME-Zarr in two ways, selected by `_zarr_source.mode`:
+- `"url"` — `http(s)://…zarr` strings: browser-direct chunk fetch via Viv's `loadOmeZarr` (zarr v2 only; the server must allow CORS).
+- `"bridge"` — local paths (`str`/`Path`), `file://`, `s3://`, `gs://` and `zarr.Group` inputs: the kernel opens the store with zarr-python 3 (v2 + v3, NGFF v0.4/v0.5) and serves per-level tiles over `model.send` (`anybioimage/mixins/zarr_bridge.py` ↔ `src/render/pixel-sources/anywidget-source.js` + `bridge-source.js`). Reads whole zarr chunk blocks once and caches every tile they contain in a byte-budgeted LRU (`viewer.bridge_cache_bytes`, default 256 MB); sibling requests for one block are de-duplicated in flight. No full-plane loads, no RAM cap.
+
+**marimo threading gotcha:** marimo's runtime context is a `threading.local`, so a widget
+`self.send()` from a plain worker thread is silently dropped (`MarimoComm._broadcast` swallows
+`ContextNotInitializedError`). The bridge spawns its workers via `make_bridge_thread()` in
+`mixins/zarr_bridge.py` — a `marimo.Thread` when a runtime context is installed on the spawning
+thread, a plain daemon thread otherwise — and spawns them lazily from `_on_bridge_msg` (the kernel
+thread). Any future background thread that must reach the frontend needs the same treatment.
+
+Everything else (numpy, BioImage, TIFF/CZI paths) silently falls back to Canvas2D (one `INFO` log line). `set_image(..., storage_options=...)` / `set_plate(..., storage_options=...)` pass fsspec options (credentials, `anon`) for remote stores; `pip install anybioimage[remote]` adds s3fs + gcsfs.
+
+**NGFF metadata** lives in one module, `anybioimage/ngff.py` (lenient v0.4 top-level / v0.5+ `ome` block parsing, `open_image → NgffImage`, plate helpers, kernel-side http probe). Spec changes go there; per-version store fixtures are in `tests/conftest.py`.
+
+**Traitlets added for the viv backend:**
+- `_render_backend` (`Unicode`, synced) — `"canvas2d"` or `"viv"`
+- `_zarr_source` (`Dict`, synced) — `{mode:"url", url, headers}` or `{mode:"bridge", levels:[{shape,chunks}], labels, dtype}`; set by `_set_zarr_url()` / `_attach_bridge()`; cleared on non-zarr `set_image` calls
+- `_render_ready` (`Bool`, synced) — flips `True` when Viv has rendered the first frame; re-armed `False` on each new zarr source
+- `bridge_cache_bytes` (`Int`, not synced) — byte budget of the kernel tile cache
+
+**Architecture:**
+- Canvas2D UI lives in `anybioimage/frontend/viewer/src/canvas2d-chrome.js` and is served raw by `backends/canvas2d.py` — no build step needed.
+- The viv bundle (`anybioimage/frontend/viewer/dist/viewer-bundle.js`) is built from `src/entry.js` via esbuild; it compiles the chrome IN and overlays a Viv/deck.gl WebGL2 canvas inside `.canvas-wrapper`.
+- **Any edit to `canvas2d-chrome.js` or `src/**` requires rebuilding the bundle:**
+  ```bash
+  cd anybioimage/frontend/viewer && npm install && npm run build
+  ```
+  Commit `dist/viewer-bundle.js` afterwards — CI `bundle.yml` enforces freshness.
+
+**Python seam:**
+- `set_image(url, headers=None)` → `_set_zarr_url()` (metadata-only, no precompute) in `mixins/image_loading.py`
+- `set_image(path|Group|s3://…)` → `_set_zarr_path()` → `ngff.open_image()` → `_attach_bridge()`
+- Plates: `_load_plate_image()` in `mixins/plate_loading.py` uses `_set_zarr_url()` for http plates and `_attach_bridge()` for everything else on the viv backend
 
 ### Annotation Tools
 
