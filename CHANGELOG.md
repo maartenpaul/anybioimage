@@ -20,8 +20,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Canvas2D ESM extracted verbatim to `anybioimage/frontend/viewer/src/canvas2d-chrome.js`
   (served raw — behavior identical; no Node needed for the default backend).
-- `import zarr` in plate loading is now lazy — `import anybioimage` no longer
-  requires zarr to be installed.
+- zarr support is an optional extra: `pip install "anybioimage[zarr]"` (`zarr>=3.1`,
+  `bioio>=3.0`, `bioio-ome-zarr>=3.0`). The base install no longer pulls zarr, dask or xarray.
+  Loading a zarr store without the extra raises an ImportError naming the install command.
+  Browser-direct `http(s)` URLs on the viv backend need no extra.
+- `requires-python` is now `>=3.11`.
+- Dependency floors raised to tested versions: `numpy>=1.26`, `pandas>=1.5`, `pillow>=9.2`.
+- An unreachable zarr host now raises `ConnectionError` naming the URL instead of a
+  bioio "unsupported file format" traceback.
+- Example notebooks point at the new IDR host (`livingobjects.ebi.ac.uk`).
 
 ### Build
 - `anybioimage/frontend/viewer/` esbuild bundle for the viv backend; pre-built

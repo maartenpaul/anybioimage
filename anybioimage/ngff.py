@@ -13,19 +13,55 @@ from __future__ import annotations
 
 import json
 import logging
+import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 import numpy as np
-import zarr
+
+if TYPE_CHECKING:
+    import zarr
 
 logger = logging.getLogger(__name__)
 
 _DEFAULT_AXES = ["t", "c", "z", "y", "x"]
 
 
+_ZARR_EXTRA_HINT = "pip install 'anybioimage[zarr]'"
+
+
 class PlateError(ValueError):
     """Raised when an HCS plate is opened where a single image was expected."""
+
+
+def require_zarr():
+    """Return the ``zarr`` module, or raise an ImportError naming the extra.
+
+    zarr is optional: plain arrays and browser-direct http(s) stores on the
+    viv backend never need it.
+    """
+    try:
+        import zarr
+    except ImportError as e:
+        raise ImportError(
+            f"Opening an OME-Zarr store needs the zarr extra: {_ZARR_EXTRA_HINT}"
+        ) from e
+    return zarr
+
+
+def require_bioio_zarr():
+    """Return ``(BioImage, bioio_ome_zarr.Reader)`` for the Canvas2D zarr path,
+    or raise an ImportError naming the extra."""
+    try:
+        import bioio_ome_zarr
+        from bioio import BioImage
+    except ImportError as e:
+        raise ImportError(
+            "Loading OME-Zarr on the canvas2d backend needs the zarr extra: "
+            f"{_ZARR_EXTRA_HINT}"
+        ) from e
+    return BioImage, bioio_ome_zarr.Reader
 
 
 def parse_ome_attrs(attrs: dict) -> tuple[str, dict]:
@@ -56,6 +92,7 @@ def parse_ome_attrs(attrs: dict) -> tuple[str, dict]:
 def open_group(src, storage_options: dict | None = None) -> zarr.Group:
     """Open ``src`` read-only: a ``zarr.Group``, local path, ``file://``,
     ``s3://``, ``gs://`` or ``http(s)://`` (the latter need fsspec backends)."""
+    zarr = require_zarr()
     if isinstance(src, zarr.Group):
         return src
     src = str(src)
@@ -139,6 +176,7 @@ def open_image(src, storage_options: dict | None = None) -> NgffImage:
     Raises ``PlateError`` for HCS plate roots and ``ValueError`` when no usable
     multiscale arrays exist.
     """
+    zarr = require_zarr()
     group = open_group(src, storage_options)
     version, ome = read_ome_attrs(group)
     if is_plate_attrs(ome):
@@ -194,14 +232,32 @@ def _http_json(url: str, headers: dict | None):
         return json.loads(resp.read().decode())
 
 
+def _is_unreachable(exc: Exception) -> bool:
+    """True for DNS / refused / timed-out connections; False when the server
+    answered with an HTTP status (``HTTPError`` is a ``URLError`` subclass)."""
+    if isinstance(exc, urllib.error.HTTPError):
+        return False
+    return isinstance(exc, (urllib.error.URLError, TimeoutError, ConnectionError))
+
+
+def _reason(exc: Exception) -> str:
+    return str(getattr(exc, "reason", None) or exc)
+
+
 def fetch_http_attrs(url: str, headers: dict | None) -> dict:
     """Raw group attrs of an http(s) zarr root: ``.zattrs`` (v2) else
     ``zarr.json["attributes"]`` (v3). Kernel-side ``urllib`` — no CORS, no
-    fsspec/aiohttp dependency. Raises ``OSError`` when neither exists."""
+    fsspec/aiohttp dependency. Raises ``ConnectionError`` when the host cannot
+    be reached at all, ``OSError`` when it answers but neither document exists."""
     base = url.rstrip("/")
     try:
         return _http_json(f"{base}/.zattrs", headers)
     except Exception as first:
+        if _is_unreachable(first):
+            raise ConnectionError(
+                f"Could not reach {base} ({_reason(first)}). Check the URL and your "
+                "network connection; the host may have moved or be down."
+            ) from first
         try:
             doc = _http_json(f"{base}/zarr.json", headers)
         except Exception as second:

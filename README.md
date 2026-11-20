@@ -14,6 +14,9 @@ Documentation: https://maartenpaul.github.io/anybioimage/
 ```bash
 uv pip install anybioimage
 
+# With OME-Zarr support (local stores, HCS plates, Canvas2D zarr loading)
+uv pip install "anybioimage[zarr]"
+
 # With all recommended dependencies (excludes SAM/PyTorch)
 uv pip install "anybioimage[all]"
 
@@ -166,7 +169,7 @@ viewer = BioImageViewer(render_backend="viv")
 viewer.set_image("https://example.com/data.ome.zarr")
 viewer.set_plate("https://example.com/plate.zarr")  # well/FOV switching stays browser-side
 
-viewer.set_image("/data/big.ome.zarr")                                        # local, any size
+viewer.set_image("/data/big.ome.zarr")                                        # local, any size; needs anybioimage[zarr]
 viewer.set_image("s3://bucket/x.ome.zarr", storage_options={"anon": True})   # needs anybioimage[remote]
 
 # A single HCS field, on a non-AWS S3 endpoint (e.g. EBI BioImage Archive):
@@ -176,6 +179,10 @@ viewer.set_image(
                      "client_kwargs": {"endpoint_url": "https://livingobjects.ebi.ac.uk"}},
 )
 ```
+
+Browser-direct `http(s)` zarr URLs on the `viv` backend work with the base install;
+everything the kernel has to open itself (local paths, `s3://`, `gs://`, plates, and zarr on
+the Canvas2D backend) needs the `zarr` extra.
 
 Non-zarr inputs on the `viv` backend fall back to Canvas2D automatically (one info log).
 Alpha limitations on Viv-rendered images: annotation/SAM tools, brightness/contrast
@@ -192,10 +199,12 @@ The Viv backend builds on [Viv](https://github.com/hms-dbmi/viv) (MIT),
 
 | Extra | Installs | Use case |
 |-------|----------|----------|
-| `bioio` | `bioio`, `bioio-tifffile` | TIFF / OME-Zarr loading |
+| `bioio` | `bioio`, `bioio-tifffile` | TIFF loading |
+| `zarr` | `zarr`, `bioio`, `bioio-ome-zarr` | OME-Zarr: local stores, HCS plates, `zarr.Group` input |
+| `remote` | zarr + `s3fs`, `gcsfs` | `s3://` / `gs://` OME-Zarr stores |
 | `contours` | `scipy` | Contour-only mask rendering |
 | `sam` | `ultralytics` (PyTorch) | SAM segmentation |
-| `all` | bioio + contours | Recommended (no PyTorch) |
+| `all` | bioio + zarr + remote + contours | Recommended (no PyTorch) |
 | `complete` | all + sam | Everything |
 
 ## License

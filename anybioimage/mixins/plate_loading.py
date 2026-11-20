@@ -167,14 +167,7 @@ class PlateLoadingMixin:
 
     def _load_plate_image_bioio(self, image_path):
         """Original bioio plate-image load (Canvas2D path)."""
-        try:
-            import bioio_ome_zarr
-            from bioio import BioImage
+        from .. import ngff
 
-            img = BioImage(image_path, reader=bioio_ome_zarr.Reader)
-            self._set_bioimage(img)
-        except ImportError:
-            raise ImportError(
-                "bioio and bioio-ome-zarr are required for plate loading. "
-                "Install with: pip install bioio bioio-ome-zarr"
-            )
+        BioImage, Reader = ngff.require_bioio_zarr()
+        self._set_bioimage(BioImage(image_path, reader=Reader))

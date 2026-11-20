@@ -2,6 +2,7 @@
 
 import base64
 import logging
+import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -154,12 +155,16 @@ def _fetch_zarr_ome_metadata(url: str, headers: dict):
 
 def _zarr_url_is_plate(url: str, headers: dict) -> bool:
     """True if the http(s) zarr root is an HCS plate (v0.4 or v0.5 layout).
-    Network/parse errors return False so the caller's normal path surfaces
-    its own error instead of masking it as "not a plate"."""
+    An unreachable host raises ``ConnectionError`` (nothing downstream can
+    succeed, and its own error would be less clear). Other fetch/parse errors
+    return False so the caller's normal path surfaces its own error instead
+    of masking it as "not a plate"."""
     from .. import ngff
 
     try:
         _, ome = ngff.parse_ome_attrs(ngff.fetch_http_attrs(url, headers or {}))
+    except ConnectionError:
+        raise
     except Exception:
         return False
     return ngff.is_plate_attrs(ome)
@@ -218,11 +223,13 @@ class ImageLoadingMixin:
             storage_options: optional fsspec options for ``s3://``/``gs://``
                   stores (credentials, ``anon``, endpoints).
         """
-        import zarr
-
         backend = getattr(self, "_render_backend", "canvas2d")
 
-        if isinstance(data, zarr.Group) or _looks_like_zarr_path(data):
+        # zarr is an optional extra. If it was never imported, ``data`` cannot
+        # be a zarr.Group, so plain arrays never trigger the import.
+        zarr = sys.modules.get("zarr")
+        is_group = zarr is not None and isinstance(data, zarr.Group)
+        if is_group or _looks_like_zarr_path(data):
             self._set_zarr_path(data, storage_options, backend)
             return
 
@@ -233,15 +240,28 @@ class ImageLoadingMixin:
                     f"Use viewer.set_plate(url) instead of set_image(url) — "
                     f"it adds Well/FOV selectors for plate navigation."
                 )
+            viv_error = None
             if backend == "viv":
                 try:
                     self._set_zarr_url(data, headers or {})
                     return
+                except ConnectionError:
+                    raise
                 except Exception as e:
+                    viv_error = e
                     logger.info(
                         "Viv zarr metadata load failed (%s); falling back to Canvas2D", e
                     )
-            self._set_zarr_url_canvas2d(data)
+            try:
+                self._set_zarr_url_canvas2d(data)
+            except ImportError as e:
+                if viv_error is None:
+                    raise
+                # The fallback is unavailable without the zarr extra; the viv
+                # failure is the real cause, so report that one.
+                raise ValueError(
+                    f"Could not open {data} on the viv backend: {viv_error}"
+                ) from e
             return
         if backend == "viv":
             logger.info("Non-zarr input on viv backend; rendering via Canvas2D pipeline.")
@@ -255,9 +275,9 @@ class ImageLoadingMixin:
         """Kernel-openable zarr (local / fsspec / Group): chunk bridge on viv,
         bioio on Canvas2D. Plates raise; other viv failures fall back to bioio;
         a missing fsspec backend (ImportError) is surfaced, not swallowed."""
-        import zarr
-
         from .. import ngff
+
+        zarr = ngff.require_zarr()
 
         if backend == "viv":
             try:
@@ -329,10 +349,10 @@ class ImageLoadingMixin:
         ``storage_options`` (fsspec credentials/options for s3://, gs://, etc.)
         is forwarded to bioio via ``fs_kwargs`` when both BioImage and the
         ome-zarr reader accept it."""
-        import bioio_ome_zarr
-        from bioio import BioImage
+        from .. import ngff
 
-        self._set_bioimage(BioImage(url, reader=bioio_ome_zarr.Reader, fs_kwargs=storage_options or {}))
+        BioImage, Reader = ngff.require_bioio_zarr()
+        self._set_bioimage(BioImage(url, reader=Reader, fs_kwargs=storage_options or {}))
 
     def _set_numpy_image(self, data: np.ndarray):
         """Set the base image from a numpy array (any shape, up to 5D).
