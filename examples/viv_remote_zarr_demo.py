@@ -16,7 +16,7 @@ def _(mo):
     from anybioimage import BioImageViewer
 
     # Public IDR OME-Zarr (same fixture URL the viv-backend branch validated against)
-    URL = "https://uk1s3.embassy.ebi.ac.uk/idr/zarr/v0.4/idr0062A/6001240.zarr"
+    URL = "https://livingobjects.ebi.ac.uk/idr/zarr/v0.4/idr0062A/6001240.zarr"
     viewer = BioImageViewer(render_backend="viv")
     viewer.set_image(URL)
     mo.ui.anywidget(viewer)

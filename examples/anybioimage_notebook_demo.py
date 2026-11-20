@@ -51,7 +51,7 @@ def _(mo):
 def _(bioio_bioformats, bioio_ome_tiff, bioio_ome_zarr, bioio_tifffile, mo):
     EXAMPLE_DATASETS = {
         "IDR HCS plate — idr0013A": {
-            "url": "https://uk1s3.embassy.ebi.ac.uk/idr/zarr/v0.4/idr0013A/3451.zarr",
+            "url": "https://livingobjects.ebi.ac.uk/idr/zarr/v0.4/idr0013A/3451.zarr",
             "type": "plate",
         },
         "IDR fluorescence — multichannel 5D": {

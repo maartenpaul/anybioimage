@@ -48,11 +48,11 @@ def _(mo):
     # clear error pointing to set_plate().
     DATASETS = {
         "IDR idr0001A — 2551 (HCS plate)": (
-            "https://uk1s3.embassy.ebi.ac.uk/idr/zarr/v0.4/idr0001A/2551.zarr",
+            "https://livingobjects.ebi.ac.uk/idr/zarr/v0.4/idr0001A/2551.zarr",
             True,
         ),
         "IDR idr0062A — 6001247 (multichannel)": (
-            "https://uk1s3.embassy.ebi.ac.uk/idr/zarr/v0.4/idr0062A/6001247.zarr",
+            "https://livingobjects.ebi.ac.uk/idr/zarr/v0.4/idr0062A/6001247.zarr",
             False,
         ),
         "EMBL zarr CORS issue": (
