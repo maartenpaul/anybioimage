@@ -186,6 +186,7 @@ class BioImageViewer(
         super().__init__(**kwargs)
         self._mask_arrays = {}  # Store raw label arrays by mask id
         self._mask_caches = {}  # Cache rendered versions by mask id
+        self._mask_stacks = {}  # (nt, nz, Y, X) label stacks of T/Z-aware masks
         self._bioimage = None  # Store BioImage reference for lazy loading
         self._plate_path = None  # HCS plate zarr path
         self._plate_store = None
@@ -213,6 +214,7 @@ class BioImageViewer(
 
         # Observers for dimension changes
         self.observe(self._on_dimension_change, names=["current_t", "current_z"])
+        self.observe(self._on_mask_position_change, names=["current_t", "current_z"])
         self.observe(self._on_preview_mode_change, names=["_preview_mode"])
         self.observe(self._on_resolution_change, names=["current_resolution"])
         self.observe(self._on_scene_change, names=["current_scene"])
