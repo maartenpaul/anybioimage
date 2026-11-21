@@ -830,6 +830,9 @@ class ImageLoadingMixin:
 
         elapsed = (time.perf_counter() - start_total) * 1000
         logger.debug("%d new + %d cached tiles in %.0fms", num_generated, num_cached, elapsed)
+        # Echo the request id: the frontend sends one request at a time and
+        # this marks it answered (also when no tile was in bounds).
+        tiles_data["_req"] = request.get("id")
         self._tiles_data = tiles_data
 
     def _prefetch_slice(self, t: int, c: int, z: int) -> None:
