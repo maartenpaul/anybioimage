@@ -11,6 +11,7 @@ Interactive anywidget for visualizing biological images in Jupyter and marimo no
 - **Tile-based rendering** - Viewport-aware caching: precomputes visible tiles first across all T/Z, then fills the rest off-screen
 - **BioImage format support** - TIFF, OME-Zarr, and other formats via bioio
 - **HCS plate support** - OME-Zarr plate visualization with well and FOV selection
+- **Opt-in Viv backend** - `BioImageViewer(render_backend="viv")` renders OME-Zarr with WebGL (deck.gl/Viv); remote http(s) stores are fetched by the browser, local/S3/GCS stores through the kernel chunk bridge
 
 ## Project Structure
 
@@ -19,7 +20,11 @@ anybioimage/
 ├── __init__.py           # Public API exports
 ├── ngff.py                # Lenient OME-NGFF metadata reader (zarr-python 3)
 ├── utils.py              # Image processing helpers and color constants
-├── viewer.py             # Main BioImageViewer widget (JS/CSS frontend + traitlets)
+├── viewer.py             # Main BioImageViewer widget (traitlets, backend selection)
+├── backends/             # canvas2d.py (default) and viv.py: which frontend ESM to load
+├── frontend/viewer/      # JS: src/canvas2d-chrome.js (Canvas2D UI, served raw), src/ Viv
+│                         # code, dist/viewer-bundle.js (committed esbuild bundle; rebuild with
+│                         # `npm run build` after editing anything in src/, CI checks it)
 └── mixins/
     ├── __init__.py       # Mixin exports
     ├── image_loading.py  # Image loading, caching, and prefetching
@@ -36,12 +41,13 @@ This project uses `uv` for package management:
 
 ```bash
 uv pip install -e ".[all]"      # Recommended: all dependencies except SAM
+uv pip install -e ".[zarr]"     # OME-Zarr stores, HCS plates (zarr, bioio, bioio-ome-zarr)
 uv pip install -e ".[dev]"      # Development dependencies only
 uv pip install -e ".[sam]"      # SAM model support (requires PyTorch)
 uv pip install -e ".[complete]" # Everything including SAM
 ```
 
-**Note:** The `sam` extra requires PyTorch and may not work on Python 3.13+. Use Python 3.11-3.12 for SAM features.
+**Note:** Python >= 3.11 (zarr 3). The `sam` extra requires PyTorch and may not work on Python 3.13+. Use Python 3.11-3.12 for SAM features.
 
 ## Usage
 
@@ -201,20 +207,18 @@ while (parent) {
 }
 ```
 
-**Sliders in the widget** (in order):
-- Index 0: Brightness (min=-1, max=1)
-- Index 1: Contrast (min=-1, max=1)
-- Index 2: T/time slider (min=0, max=dim_t-1)
-- Index 3: Z slider (min=0, max=dim_z-1)
+**Sliders in the widget:** the T and Z sliders are `input.dim-slider` (T first, then Z; only
+present when `dim_t` / `dim_z` > 1). Other `input[type="range"]` elements (per-channel
+Min/Max, mask opacity) come before them, so do not select by index over all range inputs.
 
 **Set a slider value** (React-style, needs native setter + events):
 
 ```javascript
-const sliders = shadowRoot.querySelectorAll('input[type="range"]');
+const sliders = shadowRoot.querySelectorAll('input.dim-slider');
 const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
-setter.call(sliders[2], '1');  // Set T=1
-sliders[2].dispatchEvent(new Event('input', { bubbles: true }));
-sliders[2].dispatchEvent(new Event('change', { bubbles: true }));
+setter.call(sliders[0], '1');  // Set T=1
+sliders[0].dispatchEvent(new Event('input', { bubbles: true }));
+sliders[0].dispatchEvent(new Event('change', { bubbles: true }));
 ```
 
 **Measure render time** by polling canvas pixel changes:

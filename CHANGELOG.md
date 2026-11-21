@@ -5,7 +5,9 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased] — v0.7.0-alpha
+## [Unreleased]
+
+## [0.4.0] - 2026-11-21
 
 ### Added
 - Opt-in `render_backend="viv"`: remote OME-Zarr rendered via WebGL2 with
@@ -25,10 +27,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Loading a zarr store without the extra raises an ImportError naming the install command.
   Browser-direct `http(s)` URLs on the viv backend need no extra.
 - `requires-python` is now `>=3.11`.
-- Dependency floors raised to tested versions: `numpy>=1.26`, `pandas>=1.5`, `pillow>=9.2`.
+- Dependency floors raised to tested versions: `numpy>=1.26`, `pandas>=1.5`, `pillow>=9.2`,
+  `bioio>=3.0` in the `bioio` extra.
 - An unreachable zarr host now raises `ConnectionError` naming the URL instead of a
   bioio "unsupported file format" traceback.
 - Example notebooks point at the new IDR host (`livingobjects.ebi.ac.uk`).
+
+### Fixed
+- T/Z sliders now update the picture on images under 1 megapixel; before, the status text
+  moved but the canvas stayed on the old plane.
 
 ### Build
 - `anybioimage/frontend/viewer/` esbuild bundle for the viv backend; pre-built
