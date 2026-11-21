@@ -213,6 +213,7 @@ class BioImageViewer(
 
         # Observers for dimension changes
         self.observe(self._on_dimension_change, names=["current_t", "current_z"])
+        self.observe(self._on_preview_mode_change, names=["_preview_mode"])
         self.observe(self._on_resolution_change, names=["current_resolution"])
         self.observe(self._on_scene_change, names=["current_scene"])
         self.observe(self._on_well_change, names=["current_well"])

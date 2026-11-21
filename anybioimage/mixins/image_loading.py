@@ -1124,7 +1124,10 @@ class ImageLoadingMixin:
                         cache_key = (t, i, z)
                         if cache_key in self._slice_cache:
                             ch_data = self._slice_cache[cache_key]
-                        elif preview_mode:
+                        elif preview_mode and self._full_array is None:
+                            # Lazy image: reading the plane may be slow, so skip it
+                            # while scrubbing. _on_preview_mode_change renders the
+                            # final plane. In-RAM arrays are sliced directly instead.
                             self._prefetch_executor.submit(self._prefetch_slice, t, i, z)
                             continue
                         else:
@@ -1170,6 +1173,16 @@ class ImageLoadingMixin:
 
         except Exception as e:
             logger.warning("Error updating slice: %s", e)
+
+    def _on_preview_mode_change(self, change):
+        """Render the current plane when a slider scrub ends.
+
+        The slider's last message sets ``_preview_mode=False`` with an index
+        that is already current, so no dimension-change event fires. Without
+        this, a plane skipped during the scrub would never be drawn.
+        """
+        if change.get("old") and not change.get("new"):
+            self._update_slice()
 
     def _on_dimension_change(self, change):
         """Observer callback when T or Z dimension changes."""
