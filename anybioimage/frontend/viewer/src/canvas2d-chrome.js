@@ -494,10 +494,12 @@
                     maskColor.type = 'color';
                     maskColor.value = mask.color || '#ff0000';
                     maskColor.className = 'color-swatch';
+                    maskColor.title = 'Colour (switches the mask to a single colour)';
                     maskColor.addEventListener('input', () => {
                         const updatedMasks = model.get('_masks_data').map(m =>
-                            m.id === mask.id ? { ...m, color: maskColor.value } : m
+                            m.id === mask.id ? { ...m, color: maskColor.value, color_mode: 'single' } : m
                         );
+                        singleCheck.checked = true;  // the panel is not rebuilt on every change
                         model.set('_masks_data', updatedMasks);
                         model.save_changes();
                     });
@@ -547,6 +549,26 @@
                     contoursItem.appendChild(contoursCheck);
                     contoursItem.appendChild(contoursLabel);
                     layersPanel.appendChild(contoursItem);
+
+                    // Colour mode: one colour per label (default) or the swatch colour
+                    const singleItem = document.createElement('div');
+                    singleItem.className = 'layer-item sub-item';
+                    const singleCheck = document.createElement('input');
+                    singleCheck.type = 'checkbox';
+                    singleCheck.checked = mask.color_mode === 'single';
+                    singleCheck.addEventListener('change', () => {
+                        const mode = singleCheck.checked ? 'single' : 'labels';
+                        const updatedMasks = model.get('_masks_data').map(m =>
+                            m.id === mask.id ? { ...m, color_mode: mode } : m
+                        );
+                        model.set('_masks_data', updatedMasks);
+                        model.save_changes();
+                    });
+                    const singleLabel = document.createElement('span');
+                    singleLabel.textContent = 'Single colour';
+                    singleItem.appendChild(singleCheck);
+                    singleItem.appendChild(singleLabel);
+                    layersPanel.appendChild(singleItem);
                 }
             }
 
@@ -1075,6 +1097,29 @@
             return maskCanvas;
         }
 
+        // The mask PNG from Python has one colour per label. In single-colour
+        // mode the frontend tints it with the mask's colour (kept per mask
+        // until the data or colour changes), so the colour picker is instant.
+        function maskDrawable(mask) {
+            const entry = maskCanvases[mask.id];
+            if (!entry) return null;
+            if (mask.color_mode !== 'single') return entry.canvas;
+            const colour = mask.color || '#ff0000';
+            if (entry.tintColour !== colour) {
+                const tinted = document.createElement('canvas');
+                tinted.width = entry.canvas.width;
+                tinted.height = entry.canvas.height;
+                const g = tinted.getContext('2d');
+                g.drawImage(entry.canvas, 0, 0);
+                g.globalCompositeOperation = 'source-in';
+                g.fillStyle = colour;
+                g.fillRect(0, 0, tinted.width, tinted.height);
+                entry.tint = tinted;
+                entry.tintColour = colour;
+            }
+            return entry.tint;
+        }
+
         async function updateMaskCanvases() {
             const masks = model.get('_masks_data') || [];
             const newCanvases = {};
@@ -1237,9 +1282,10 @@
             // Draw mask overlays
             const masks = model.get('_masks_data') || [];
             for (const mask of masks) {
-                if (mask.visible && maskCanvases[mask.id]) {
+                const drawable = mask.visible ? maskDrawable(mask) : null;
+                if (drawable) {
                     ctx.globalAlpha = mask.opacity || 0.5;
-                    ctx.drawImage(maskCanvases[mask.id].canvas, 0, 0);
+                    ctx.drawImage(drawable, 0, 0);
                     ctx.globalAlpha = 1.0;
                 }
             }
