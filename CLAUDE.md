@@ -295,7 +295,8 @@ When `_viewport_tiles_all_cached(t, z)` is True, `_update_slice()` returns immed
 - `getVisibleTiles()`: computes only tiles intersecting current viewport (scale/translateX/translateY)
 - `requestTiles()`: debounced 30ms — coalesces rapid slider calls into one websocket message
 - `reportViewport()`: debounced 300ms after pan/zoom ends, sends tile range to Python to restart precompute
-- `decodeRawTile`: uses `Uint8ClampedArray.from(binary, c => c.charCodeAt(0))` (native V8, ~4× faster than explicit loop); handles `fmt: "jpeg"` via `createImageBitmap(new Blob([bytes], {type: "image/jpeg"}))`
+- `decodeRawTile`: base64 via `Uint8Array.fromBase64` (fallback: preallocated `charCodeAt` loop; the old `Uint8ClampedArray.from(binary, callback)` cost ~20 ms per tile); handles `fmt: "jpeg"` via `createImageBitmap(new Blob([bytes], {type: "image/jpeg"}))`
+- Tile requests are single-flight: one `_tile_request` in flight (writing it twice back-to-back loses one in marimo), visible plane first, prefetch of one adjacent plane only when idle. Each request carries an `id` that Python echoes as `_tiles_data._req`; unanswered requests are released after 15 s; replies made before `clearTileCache` are dropped.
 
 **Thumbnail (baseImage):**
 - Sent as PNG with `compress_level=1` (~16ms vs 81ms for default level 6) on cold T/Z navigation
