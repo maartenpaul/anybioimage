@@ -122,7 +122,10 @@ class MaskManagementMixin:
                 frame per time point and/or z-plane. Leading singleton axes are
                 ignored; 5D input is read as TCZYX with one channel.
             name: Display name for the mask layer (auto-assigned if None)
-            color: Hex color for the mask (auto-assigned if None)
+            color: Hex colour. If given, the whole mask is drawn in this colour
+                (``color_mode="single"``); if None, each label value gets its
+                own colour (``color_mode="labels"``) and a colour is still
+                assigned for the layers panel.
             opacity: Opacity value 0-1
             visible: Whether the mask is visible
             contours_only: If True, show only contours instead of filled regions
@@ -151,7 +154,8 @@ class MaskManagementMixin:
         # Store the labels currently on screen (the frame for stacks)
         self._mask_arrays[mask_id] = labels
 
-        # Auto-assign color
+        # Explicit colour -> single-colour mask; otherwise one colour per label
+        color_mode = "labels" if color is None else "single"
         if color is None:
             color = MASK_COLORS[len(self._masks_data) % len(MASK_COLORS)]
 
@@ -169,6 +173,7 @@ class MaskManagementMixin:
             "visible": visible,
             "opacity": opacity,
             "color": color,
+            "color_mode": color_mode,
             "contours": contours_only,
             "contour_width": contour_width,
         }
@@ -246,6 +251,30 @@ class MaskManagementMixin:
         while len(cache) > _MASK_FRAME_CACHE_SIZE:
             cache.popitem(last=False)
         return data_b64
+
+    def _on_masks_data_change(self, change=None):
+        """Re-render masks whose contour settings were changed in the frontend.
+
+        The layers panel edits ``contours`` in ``_masks_data`` directly; without
+        this the checkbox changed the field but not the overlay. Colour, colour
+        mode, opacity and visibility are applied by the frontend itself.
+        """
+        # Compare the stored picture with the one the requested style gives
+        # (a cache lookup), not with a record of what was last rendered: marimo
+        # can apply the frontend's update twice, the second time after this
+        # observer already replaced the picture, which would leave the old one.
+        updated, changed = [], False
+        for mask in self._masks_data:
+            mask_id = mask.get("id")
+            if mask_id in self._mask_arrays:
+                want = (bool(mask.get("contours", False)), int(mask.get("contour_width", 1)))
+                expected = self._render_mask(mask_id, self._mask_arrays[mask_id], *want)
+                if mask.get("data") != expected:
+                    mask = {**mask, "data": expected}
+                    changed = True
+            updated.append(mask)
+        if changed:
+            self._masks_data = updated
 
     def _on_mask_position_change(self, change=None):
         """Show the frame of every stacked mask that matches the new T/Z."""
