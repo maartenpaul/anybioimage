@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.4.0] - 2026-11-22
 
 ### Added
+- Mask colour mode: `add_mask(color=...)` or the layers-panel swatch draws the whole mask in one
+  colour; by default each label keeps its own colour. New "Single colour" checkbox in the panel.
 - Masks can follow the T/Z sliders: `add_mask` accepts a (T, Y, X), (Z, Y, X) or (T, Z, Y, X)
   label stack (or TCZYX with one channel) and shows the frame for the current position.
   `dims="TYX"` / `"ZYX"` resolves images with as many time points as z-planes.
@@ -41,6 +43,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - T/Z sliders now update the picture on images under 1 megapixel; before, the status text
   moved but the canvas stayed on the old plane.
+- The layers panel's mask colour swatch and "Contours only" checkbox now change the overlay;
+  before, they changed nothing on screen.
 - After a T/Z step the canvas no longer shows the previous plane at full brightness while the
   new plane loads: the old picture is dimmed with a "Loading T 5/9" badge until it arrives.
 
