@@ -315,19 +315,25 @@ When `_viewport_tiles_all_cached(t, z)` is True, `_update_slice()` returns immed
 
 ### Expected performance (image.zarr, 10T×3Z×2048×2048)
 
-**Fit-to-screen zoom** (64 tiles/slice visible, all slices = 1920 tiles):
-- `set_image`: ~2s (loads 252MB into RAM, starts precompute)
-- First T/Z navigation: thumbnail in ~20ms, full tiles in ~500ms
-- After precompute Pass 1 (~8s with 4 workers): all T/Z instant from cache (~50ms)
+Measured 2026-11-22 in headless Chromium (Radeon 780M), marimo 0.25.2, canvas 1059×800 at
+fit-to-screen (64 full-resolution tiles visible; the pyramid level is only chosen on wheel zoom).
+Raw results: `docs/superpowers/plans/2026-11-22-*-verify/` in the main checkout (untracked).
 
-**4× zoom** (4 tiles/slice visible):
-- Viewport reported after 300ms of holding still
-- Pass 1 caches 4 × 30 = 120 tiles in ~2s
-- All T/Z navigation and play after that: **instant, zero round-trips**
+- T/Z step to a plane already in the browser: ~50–60 ms, no long frames.
+- First visit to a plane the browser has not received: ~1.4 s median (0.8–2.1 s), dominated by
+  the kernel → page round trip of ~22 MB of base64 raw-RGBA tiles; marimo's server spends
+  ~1.4 s compressing each such message (permessage-deflate). JupyterLab transports it in ~0.2 s.
+  Planes already prefetched (adjacent T/Z) show in ~50 ms.
+- While a plane loads, the previous picture is dimmed with a "Loading T x/y" badge after 150 ms.
+- Small images (< 1 MP, no tiles): ~50–60 ms per step.
 
-**Play mode:**
-- While precompute Pass 1 is running: thumbnail flash on each frame
-- After Pass 1 complete: pure JS render, no Python involvement, smooth playback
+**Canvas filter rule:** never set `ctx.filter` around per-tile `drawImage` calls. In Chrome a
+filter costs ~8 ms per draw even when it is the identity (64 tiles: 507 ms vs 5.8 ms). With
+brightness/contrast set, `renderCanvas` draws the image into an offscreen layer and applies the
+filter once (~20 ms).
+
+**Known gaps (next steps):** binary tile transport instead of base64 JSON, compressed (lossless
+PNG) tiles by default, choosing the pyramid level at fit-to-screen.
 
 **Flat TIFF/CZI at fit-to-screen (synthetic pyramid level 2, 512×512):**
 - Composite is 16× smaller → ~0.4ms vs ~6ms per slice
