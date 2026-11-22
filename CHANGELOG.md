@@ -41,8 +41,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - T/Z sliders now update the picture on images under 1 megapixel; before, the status text
   moved but the canvas stayed on the old plane.
+- After a T/Z step the canvas no longer shows the previous plane at full brightness while the
+  new plane loads: the old picture is dimmed with a "Loading T 5/9" badge until it arrives.
 
 ### Performance
+- Canvas2D: T/Z steps to planes already loaded in the browser take ~55 ms instead of ~450 ms
+  (2048x2048 image). Tiles were drawn through a canvas filter even at default
+  brightness/contrast, which costs ~8 ms per tile in Chrome.
 - Canvas2D tiles: one tile request in flight at a time, visible plane before prefetch, and a
   faster base64 decode. Measured in marimo on a 2048x2048 OME-Zarr: first visit to a plane
   2.0 s median instead of 2.9 s (worst 2.3 s instead of 4.2 s), longest page freeze 0.66 s
