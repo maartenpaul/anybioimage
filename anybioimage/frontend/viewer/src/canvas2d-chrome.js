@@ -954,6 +954,19 @@
         let currentPolygonPoints = [];
         let currentMousePos = null;
         let baseImage = null;
+        // Which T/Z plane baseImage shows. Python skips sending a new preview
+        // when it already has a plane's tiles, so after a T/Z step baseImage
+        // can still be the previous plane while the browser fetches tiles.
+        // Drawing it as if current showed the wrong plane under the new
+        // T/Z label; instead it is dimmed and marked as loading.
+        let baseImagePlane = null;
+        let imageLayer = null;  // offscreen canvas, used only when a brightness/contrast filter is set
+        let staleSince = 0;
+        let staleTimer = null;
+        const STALE_DELAY_MS = 150;  // fast steps never flash the indicator
+        function planeKey() {
+            return `${model.get('current_t') || 0}_${model.get('current_z') || 0}`;
+        }
         let maskCanvases = {};  // Cache for mask canvas elements
         let lastClickedSamCoords = null;  // For SAM mask deletion
 
@@ -1099,17 +1112,39 @@
             const contrast = model.get('image_contrast') || 0;
             const brightnessPercent = (brightness * 100);
             const contrastPercent = ((contrast + 1) * 100);
+            // A canvas filter makes every drawImage much slower in Chrome, even
+            // an identity one, so leave it off at the default brightness/contrast.
+            const imageFilter = (brightness === 0 && contrast === 0)
+                ? 'none'
+                : `brightness(${100 + brightnessPercent}%) contrast(${contrastPercent}%)`;
 
-            // Background: draw thumbnail if available, checkerboard only before first load
-            if (model.get('image_visible') && baseImage) {
-                ctx.save();
-                ctx.filter = `brightness(${100 + brightnessPercent}%) contrast(${contrastPercent}%)`;
-                ctx.translate(translateX, translateY);
-                ctx.scale(scale, scale);
-                // Stretch thumbnail to full image dimensions — tiles overdraw at full resolution
-                ctx.drawImage(baseImage, 0, 0, imgWidth, imgHeight);
-                ctx.restore();
+            // Is the picture underneath from another plane than the one selected?
+            // Only judged in tile mode: there the selected plane's tiles always
+            // arrive and clear it. In non-tile mode Python sends a preview for
+            // every step, and an unchanged preview (identical planes) sends no
+            // update at all, which would leave the indicator up for good.
+            let tilesComplete = true;
+            if (useTileMode) {
+                const vt = getVisibleTiles(scale, translateX, translateY, canvas.width, canvas.height,
+                    imgWidth, imgHeight, model.get('current_t'), model.get('current_z'));
+                tilesComplete = vt.every(tile => tileCache.has(tile.key));  // true when nothing is in view
+            }
+            const stale = useTileMode && !!baseImage && baseImagePlane !== null
+                && baseImagePlane !== planeKey() && !tilesComplete;
+            let showStale = false;
+            if (stale) {
+                if (!staleSince) staleSince = performance.now();
+                const age = performance.now() - staleSince;
+                if (age >= STALE_DELAY_MS) {
+                    showStale = true;
+                } else if (!staleTimer) {
+                    staleTimer = setTimeout(() => { staleTimer = null; renderCanvas(); }, STALE_DELAY_MS - age + 5);
+                }
             } else {
+                staleSince = 0;
+            }
+
+            if (!(model.get('image_visible') && baseImage)) {
                 // Checkerboard fallback (shown only before any image is loaded)
                 const checkSize = 10;
                 ctx.fillStyle = '#2a2a2a';
@@ -1124,10 +1159,34 @@
                 }
             }
 
-            ctx.save();
-
             if (model.get('image_visible')) {
-                ctx.filter = `brightness(${100 + brightnessPercent}%) contrast(${contrastPercent}%)`;
+                // The image (preview + tiles) is drawn without a canvas filter:
+                // in Chrome a filter costs ~8 ms per drawImage, ~500 ms for 64
+                // tiles, even when it is the identity. With brightness/contrast
+                // set, draw unfiltered into an offscreen layer and apply the
+                // filter once (~20 ms).
+                let ictx = ctx;
+                if (imageFilter !== 'none') {
+                    if (!imageLayer) imageLayer = document.createElement('canvas');
+                    imageLayer.width = canvas.width;   // also clears it
+                    imageLayer.height = canvas.height;
+                    ictx = imageLayer.getContext('2d');
+                    ictx.imageSmoothingEnabled = ctx.imageSmoothingEnabled;
+                }
+
+                if (baseImage) {
+                    ictx.save();
+                    ictx.translate(translateX, translateY);
+                    ictx.scale(scale, scale);
+                    // Stretch thumbnail to full image dimensions — tiles overdraw at full resolution
+                    ictx.drawImage(baseImage, 0, 0, imgWidth, imgHeight);
+                    if (showStale) {
+                        // Dim the out-of-date picture (an overlay, not a filter: free)
+                        ictx.fillStyle = 'rgba(0, 0, 0, 0.55)';
+                        ictx.fillRect(0, 0, imgWidth, imgHeight);
+                    }
+                    ictx.restore();
+                }
 
                 if (useTileMode) {
                     const t = model.get('current_t'), z = model.get('current_z');
@@ -1141,7 +1200,7 @@
                         if (img) {
                             const screenX = Math.round(tile.tx * TILE_SIZE * scale + translateX);
                             const screenY = Math.round(tile.ty * TILE_SIZE * scale + translateY);
-                            ctx.drawImage(img, screenX, screenY,
+                            ictx.drawImage(img, screenX, screenY,
                                 Math.ceil(img.width * scale), Math.ceil(img.height * scale));
                         } else {
                             allCached = false;
@@ -1152,12 +1211,15 @@
                         prefetchAdjacentTiles(visibleTiles, t, z);
                     }
                 }
-                // Non-tile mode: baseImage already drawn above as background
+                // Non-tile mode: the preview drawn above is the image
 
-                ctx.filter = 'none';
+                if (ictx !== ctx) {
+                    ctx.save();
+                    ctx.filter = imageFilter;
+                    ctx.drawImage(imageLayer, 0, 0);
+                    ctx.restore();
+                }
             }
-
-            ctx.restore();
 
             // Draw cache progress bar (outside save/restore stack, no transform applied)
             const cacheProgress = model.get('_cache_progress') || 0;
@@ -1302,7 +1364,28 @@
             }
 
             ctx.restore();
+
+            if (showStale) drawLoadingBadge();
             zoomStatus.textContent = 'Zoom: ' + Math.round(scale * 100) + '%';
+        }
+
+        // "Loading T 5/9" badge (screen coordinates) shown over a dimmed,
+        // out-of-date picture until the selected plane arrives.
+        function drawLoadingBadge() {
+            const parts = [];
+            const dimT = model.get('dim_t') || 1, dimZ = model.get('dim_z') || 1;
+            if (dimT > 1) parts.push(`T ${model.get('current_t') || 0}/${dimT - 1}`);
+            if (dimZ > 1) parts.push(`Z ${model.get('current_z') || 0}/${dimZ - 1}`);
+            const text = parts.length ? `Loading ${parts.join('  ')}…` : 'Loading…';
+            ctx.save();
+            ctx.font = '12px system-ui, sans-serif';
+            const w = ctx.measureText(text).width + 16;
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.65)';
+            ctx.fillRect(8, 8, w, 22);
+            ctx.fillStyle = '#ffffff';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(text, 16, 19);
+            ctx.restore();
         }
 
         function resetView() {
@@ -1597,8 +1680,10 @@
 
         async function loadBaseImage() {
             const imageData = model.get('image_data');
+            const plane = planeKey();  // the plane Python rendered this preview for
             if (imageData) {
                 baseImage = await loadImage(imageData);
+                baseImagePlane = plane;
             }
             checkTileMode();
             if (isInitialLoad) {
