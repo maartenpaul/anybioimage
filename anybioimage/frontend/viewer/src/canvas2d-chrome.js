@@ -91,32 +91,77 @@
             }, 300);
         }
 
+        // Tile requests go to Python one at a time. Writing _tile_request
+        // twice in quick succession can lose the first write (marimo merges
+        // back-to-back model updates), and a lost request left its tiles in
+        // pendingTiles forever, so that plane never drew. With one request in
+        // flight the visible plane also never waits behind several prefetches.
+        //   - the visible request waits in `queuedVisible` (latest wins);
+        //   - prefetch is only sent when nothing else is queued or in flight;
+        //   - Python echoes the request id in _tiles_data._req, which ends the
+        //     request; a request with no answer is released after a timeout.
+        const TILE_REQUEST_TIMEOUT_MS = 15000;
         let _tileRequestTimer = null;
+        let visibleDebouncePending = false;
+        let tileRequestSeq = 0;
+        let tileCacheGeneration = 0;     // bumped by clearTileCache; stale replies are dropped
+        let inFlight = null;             // { id, gen, keys, timer }
+        let queuedVisible = null;        // { tiles, t, z }
+
+        function releaseInFlight() {
+            if (!inFlight) return;
+            clearTimeout(inFlight.timer);
+            inFlight = null;
+        }
+
+        function sendTileRequest(tiles, t, z, prefetch) {
+            const missing = tiles.filter(tile => !tileCache.has(tile.key) && !pendingTiles.has(tile.key));
+            if (missing.length === 0) return false;
+            const id = ++tileRequestSeq;
+            const keys = missing.map(tile => tile.key);
+            keys.forEach(key => pendingTiles.add(key));
+            const request = { id, gen: tileCacheGeneration, keys, timer: null };
+            request.timer = setTimeout(() => {
+                // No answer: let these tiles be requested again.
+                if (inFlight !== request) return;
+                keys.forEach(key => pendingTiles.delete(key));
+                inFlight = null;
+                pumpTileRequests();
+            }, TILE_REQUEST_TIMEOUT_MS);
+            inFlight = request;
+            const msg = { tiles: missing.map(tile => ({ tx: tile.tx, ty: tile.ty })), t, z, id, timestamp: Date.now() };
+            if (prefetch) msg.prefetch = true;
+            model.set('_tile_request', msg);
+            model.save_changes();
+            return true;
+        }
+
+        function pumpTileRequests() {
+            if (inFlight || !queuedVisible) return;
+            const { tiles, t, z } = queuedVisible;
+            queuedVisible = null;
+            if (!sendTileRequest(tiles, t, z, false)) pumpTileRequests();
+        }
 
         function requestTiles(tiles, t, z) {
             // see renderCanvas guard
             if (model.get('_render_backend') === 'viv' && (model.get('_zarr_source') || {}).mode) return;
             const missing = tiles.filter(tile => !tileCache.has(tile.key) && !pendingTiles.has(tile.key));
             if (missing.length === 0) return;
-            // Debounce: cancel any pending request and re-schedule with latest T/Z.
-            // During rapid scrubbing this coalesces multiple renderCanvas() calls into one
-            // websocket message, preventing a pile-up of stale tile requests.
+            // Debounce: during rapid scrubbing only the latest T/Z is requested.
             clearTimeout(_tileRequestTimer);
+            visibleDebouncePending = true;
             _tileRequestTimer = setTimeout(() => {
-                // Re-filter in case tiles arrived while we were waiting
-                const stillMissing = missing.filter(tile => !tileCache.has(tile.key) && !pendingTiles.has(tile.key));
-                if (stillMissing.length === 0) return;
-                stillMissing.forEach(tile => pendingTiles.add(tile.key));
-                model.set('_tile_request', {
-                    tiles: stillMissing.map(tile => ({ tx: tile.tx, ty: tile.ty })),
-                    t, z, timestamp: Date.now()
-                });
-                model.save_changes();
+                visibleDebouncePending = false;
+                queuedVisible = { tiles: missing, t, z };
+                pumpTileRequests();
             }, 30);
         }
 
-        // Prefetch tiles for adjacent T/Z slices
+        // Prefetch the visible tiles of one adjacent T/Z slice, only when the
+        // request channel is idle so it never delays the plane on screen.
         function prefetchAdjacentTiles(visibleTiles, t, z) {
+            if (inFlight || queuedVisible || visibleDebouncePending) return;
             const dimT = model.get('dim_t') || 1;
             const dimZ = model.get('dim_z') || 1;
             const adjacentSlices = [];
@@ -133,22 +178,16 @@
                     tx: tile.tx, ty: tile.ty,
                     key: `${slice.t}_${slice.z}_${tile.tx}_${tile.ty}`
                 }));
-                const missing = prefetchTiles.filter(tile => !tileCache.has(tile.key) && !pendingTiles.has(tile.key));
-                if (missing.length > 0) {
-                    missing.forEach(tile => pendingTiles.add(tile.key));
-                    model.set('_tile_request', {
-                        tiles: missing.map(t => ({ tx: t.tx, ty: t.ty })),
-                        t: slice.t, z: slice.z, timestamp: Date.now(), prefetch: true
-                    });
-                    model.save_changes();
-                    break; // Only prefetch one slice at a time to avoid overload
-                }
+                if (sendTileRequest(prefetchTiles, slice.t, slice.z, true)) return;
             }
         }
 
         function clearTileCache() {
             tileCache.clear();
             pendingTiles.clear();
+            tileCacheGeneration++;
+            releaseInFlight();
+            queuedVisible = null;
         }
 
         const container = document.createElement('div');
@@ -1643,26 +1682,52 @@
         model.on('change:current_z', () => { updateDimStatus(); if (panelOpen) requestHistograms(); renderCanvas(); });
 
         // Decode raw RGBA bytes (or JPEG) to ImageBitmap (much faster than PNG)
+        // base64 -> bytes. Uint8Array.fromBase64 is native where available;
+        // the fallback fills a preallocated array (Uint8ClampedArray.from with
+        // a per-character callback cost ~20 ms per 256x256 tile).
+        function base64ToBytes(data) {
+            if (typeof Uint8Array.fromBase64 === 'function') return Uint8Array.fromBase64(data);
+            const binary = atob(data);
+            const bytes = new Uint8Array(binary.length);
+            for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+            return bytes;
+        }
+
         async function decodeRawTile(tileData) {
             const { w, h, data, fmt } = tileData;
-            const binary = atob(data);
+            const bytes = base64ToBytes(data);
             if (fmt === 'jpeg') {
-                const bytes = new Uint8Array(binary.length);
-                for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
                 return await createImageBitmap(new Blob([bytes], { type: 'image/jpeg' }));
             }
-            const bytes = Uint8ClampedArray.from(binary, c => c.charCodeAt(0));
-            return await createImageBitmap(new ImageData(bytes, w, h));
+            const pixels = new Uint8ClampedArray(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+            return await createImageBitmap(new ImageData(pixels, w, h));
         }
 
         model.on('change:_tiles_data', async () => {
             const tilesData = model.get('_tiles_data') || {};
-            const entries = Object.entries(tilesData).filter(([key, tileData]) => tileData && !tileCache.has(key));
-            if (entries.length === 0) return;
+            const replyId = tilesData._req;
+            const request = inFlight && inFlight.id === replyId ? inFlight : null;
+            const gen = tileCacheGeneration;
+            if (request) {
+                // Keys the reply did not include (e.g. outside the image) are
+                // no longer pending, so they can be asked for again later.
+                request.keys.forEach(key => { if (!(key in tilesData)) pendingTiles.delete(key); });
+                releaseInFlight();
+            }
+            // A reply to a request made before clearTileCache (channel or
+            // resolution change) carries old pixels: drop it.
+            const stale = request ? request.gen !== gen : false;
+            const entries = stale ? [] : Object.entries(tilesData)
+                .filter(([key, tileData]) => key !== '_req' && tileData && !tileCache.has(key));
+            if (entries.length === 0) {
+                pumpTileRequests();
+                renderCanvas();
+                return;
+            }
             const decodePromises = entries.map(async ([key, tileData]) => {
                 try {
                     const img = await decodeRawTile(tileData);
-                    cacheTile(key, img);
+                    if (gen === tileCacheGeneration) cacheTile(key, img);
                     pendingTiles.delete(key);
                 } catch (e) {
                     console.error('Tile decode error:', e);
@@ -1670,6 +1735,7 @@
                 }
             });
             await Promise.all(decodePromises);
+            pumpTileRequests();
             renderCanvas();
         });
 
