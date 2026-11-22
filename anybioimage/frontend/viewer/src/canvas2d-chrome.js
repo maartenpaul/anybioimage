@@ -954,6 +954,18 @@
         let currentPolygonPoints = [];
         let currentMousePos = null;
         let baseImage = null;
+        // Which T/Z plane baseImage shows. Python skips sending a new preview
+        // when it already has a plane's tiles, so after a T/Z step baseImage
+        // can still be the previous plane while the browser fetches tiles.
+        // Drawing it as if current showed the wrong plane under the new
+        // T/Z label; instead it is dimmed and marked as loading.
+        let baseImagePlane = null;
+        let staleSince = 0;
+        let staleTimer = null;
+        const STALE_DELAY_MS = 150;  // fast steps never flash the indicator
+        function planeKey() {
+            return `${model.get('current_t') || 0}_${model.get('current_z') || 0}`;
+        }
         let maskCanvases = {};  // Cache for mask canvas elements
         let lastClickedSamCoords = null;  // For SAM mask deletion
 
@@ -1100,10 +1112,32 @@
             const brightnessPercent = (brightness * 100);
             const contrastPercent = ((contrast + 1) * 100);
 
+            // Is the picture underneath from another plane than the one selected?
+            let tilesComplete = false;
+            if (useTileMode) {
+                const vt = getVisibleTiles(scale, translateX, translateY, canvas.width, canvas.height,
+                    imgWidth, imgHeight, model.get('current_t'), model.get('current_z'));
+                tilesComplete = vt.length > 0 && vt.every(tile => tileCache.has(tile.key));
+            }
+            const stale = !!baseImage && baseImagePlane !== null && baseImagePlane !== planeKey() && !tilesComplete;
+            let showStale = false;
+            if (stale) {
+                if (!staleSince) staleSince = performance.now();
+                const age = performance.now() - staleSince;
+                if (age >= STALE_DELAY_MS) {
+                    showStale = true;
+                } else if (!staleTimer) {
+                    staleTimer = setTimeout(() => { staleTimer = null; renderCanvas(); }, STALE_DELAY_MS - age + 5);
+                }
+            } else {
+                staleSince = 0;
+            }
+
             // Background: draw thumbnail if available, checkerboard only before first load
             if (model.get('image_visible') && baseImage) {
                 ctx.save();
-                ctx.filter = `brightness(${100 + brightnessPercent}%) contrast(${contrastPercent}%)`;
+                ctx.filter = `brightness(${100 + brightnessPercent}%) contrast(${contrastPercent}%)`
+                    + (showStale ? ' brightness(45%)' : '');
                 ctx.translate(translateX, translateY);
                 ctx.scale(scale, scale);
                 // Stretch thumbnail to full image dimensions — tiles overdraw at full resolution
@@ -1302,7 +1336,28 @@
             }
 
             ctx.restore();
+
+            if (showStale) drawLoadingBadge();
             zoomStatus.textContent = 'Zoom: ' + Math.round(scale * 100) + '%';
+        }
+
+        // "Loading T 5/9" badge (screen coordinates) shown over a dimmed,
+        // out-of-date picture until the selected plane arrives.
+        function drawLoadingBadge() {
+            const parts = [];
+            const dimT = model.get('dim_t') || 1, dimZ = model.get('dim_z') || 1;
+            if (dimT > 1) parts.push(`T ${model.get('current_t') || 0}/${dimT - 1}`);
+            if (dimZ > 1) parts.push(`Z ${model.get('current_z') || 0}/${dimZ - 1}`);
+            const text = parts.length ? `Loading ${parts.join('  ')}…` : 'Loading…';
+            ctx.save();
+            ctx.font = '12px system-ui, sans-serif';
+            const w = ctx.measureText(text).width + 16;
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.65)';
+            ctx.fillRect(8, 8, w, 22);
+            ctx.fillStyle = '#ffffff';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(text, 16, 19);
+            ctx.restore();
         }
 
         function resetView() {
@@ -1597,8 +1652,10 @@
 
         async function loadBaseImage() {
             const imageData = model.get('image_data');
+            const plane = planeKey();  // the plane Python rendered this preview for
             if (imageData) {
                 baseImage = await loadImage(imageData);
+                baseImagePlane = plane;
             }
             checkTileMode();
             if (isInitialLoad) {
