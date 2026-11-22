@@ -101,6 +101,10 @@ class BioImageViewer(
     # Multi-resolution support
     resolution_levels = traitlets.List(traitlets.Int()).tag(sync=True)
     current_resolution = traitlets.Int(0).tag(sync=True)
+    # [height, width, level] of the current level in its own pixels; [] at level 0.
+    # width/height stay at level 0, so shapes and masks keep full-resolution
+    # coordinates at every zoom; only the tile grid uses the level's size.
+    _level_shape = traitlets.List(traitlets.Int()).tag(sync=True)
     _preview_mode = traitlets.Bool(False).tag(sync=True)  # True when actively scrubbing
 
     # Scene support

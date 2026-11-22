@@ -32,17 +32,38 @@
         const MAX_CACHE_SIZE = 4096;
         let useTileMode = false;
 
+        // The canvas works in full-resolution (level 0) pixels at every zoom:
+        // width/height, shapes and masks never change with the level. Tiles
+        // are cut from the current level, so the tile grid is in that level's
+        // pixels and each tile covers fx × fy full-resolution pixels.
+        // _level_shape is [h, w, level], or [] at level 0.
+        function levelGrid() {
+            const w = model.get('width'), h = model.get('height');
+            const ls = model.get('_level_shape') || [];
+            if (ls.length >= 2 && ls[0] > 0 && ls[1] > 0) {
+                return { w: ls[1], h: ls[0], fx: w / ls[1], fy: h / ls[0], level: ls[2] ?? -1 };
+            }
+            return { w, h, fx: 1, fy: 1, level: 0 };
+        }
+
+        // Python has switched to the level the zoom asked for. Until then a
+        // tile would be placed on the wrong grid, so none are requested.
+        function levelReady() {
+            return levelGrid().level === (model.get('current_resolution') || 0);
+        }
+
         function getVisibleTiles(scale, translateX, translateY, canvasWidth, canvasHeight, imageWidth, imageHeight, t, z) {
-            const minX = Math.max(0, -translateX / scale);
-            const minY = Math.max(0, -translateY / scale);
-            const maxX = Math.min(imageWidth, (-translateX + canvasWidth) / scale);
-            const maxY = Math.min(imageHeight, (-translateY + canvasHeight) / scale);
+            const g = levelGrid();
+            const minX = Math.max(0, -translateX / scale) / g.fx;
+            const minY = Math.max(0, -translateY / scale) / g.fy;
+            const maxX = Math.min(imageWidth, (-translateX + canvasWidth) / scale) / g.fx;
+            const maxY = Math.min(imageHeight, (-translateY + canvasHeight) / scale) / g.fy;
 
             const tiles = [];
             const startTileX = Math.max(0, Math.floor(minX / TILE_SIZE));
             const startTileY = Math.max(0, Math.floor(minY / TILE_SIZE));
-            const endTileX = Math.ceil(maxX / TILE_SIZE);
-            const endTileY = Math.ceil(maxY / TILE_SIZE);
+            const endTileX = Math.min(Math.ceil(maxX / TILE_SIZE), Math.ceil(g.w / TILE_SIZE));
+            const endTileY = Math.min(Math.ceil(maxY / TILE_SIZE), Math.ceil(g.h / TILE_SIZE));
 
             for (let ty = startTileY; ty < endTileY; ty++) {
                 for (let tx = startTileX; tx < endTileX; tx++) {
@@ -76,7 +97,7 @@
         function reportViewport() {
             clearTimeout(_viewportTimer);
             _viewportTimer = setTimeout(() => {
-                if (!useTileMode) return;
+                if (!useTileMode || !levelReady()) return;
                 const imgWidth = model.get('width');
                 const imgHeight = model.get('height');
                 const vt = getVisibleTiles(scale, translateX, translateY,
@@ -146,6 +167,7 @@
         function requestTiles(tiles, t, z) {
             // see renderCanvas guard
             if (model.get('_render_backend') === 'viv' && (model.get('_zarr_source') || {}).mode) return;
+            if (!levelReady()) return;
             const missing = tiles.filter(tile => !tileCache.has(tile.key) && !pendingTiles.has(tile.key));
             if (missing.length === 0) return;
             // Debounce: during rapid scrubbing only the latest T/Z is requested.
@@ -161,7 +183,7 @@
         // Prefetch the visible tiles of one adjacent T/Z slice, only when the
         // request channel is idle so it never delays the plane on screen.
         function prefetchAdjacentTiles(visibleTiles, t, z) {
-            if (inFlight || queuedVisible || visibleDebouncePending) return;
+            if (inFlight || queuedVisible || visibleDebouncePending || !levelReady()) return;
             const dimT = model.get('dim_t') || 1;
             const dimZ = model.get('dim_z') || 1;
             const adjacentSlices = [];
@@ -1239,14 +1261,15 @@
 
                     requestTiles(visibleTiles, t, z);
 
+                    const g = levelGrid();
                     let allCached = true;
                     for (const tile of visibleTiles) {
                         const img = getTile(tile.key);
                         if (img) {
-                            const screenX = Math.round(tile.tx * TILE_SIZE * scale + translateX);
-                            const screenY = Math.round(tile.ty * TILE_SIZE * scale + translateY);
+                            const screenX = Math.round(tile.tx * TILE_SIZE * g.fx * scale + translateX);
+                            const screenY = Math.round(tile.ty * TILE_SIZE * g.fy * scale + translateY);
                             ictx.drawImage(img, screenX, screenY,
-                                Math.ceil(img.width * scale), Math.ceil(img.height * scale));
+                                Math.ceil(img.width * g.fx * scale), Math.ceil(img.height * g.fy * scale));
                         } else {
                             allCached = false;
                         }
@@ -1871,6 +1894,9 @@
         });
 
         model.on('change:current_resolution', clearTileCache);
+        // Python has switched level: drop tiles cut for the old grid, redraw
+        // and request the new level's tiles.
+        model.on('change:_level_shape', () => { clearTileCache(); renderCanvas(); reportViewport(); });
 
         new ResizeObserver(() => renderCanvas()).observe(canvasWrapper);
       } catch (error) {

@@ -195,6 +195,16 @@ class SAMIntegrationMixin:
                 self._processed_point_ids.add(point_id)
                 self._run_sam_on_point(point)
 
+    def _sam_scale(self, image: np.ndarray) -> tuple[float, float]:
+        """Factors from full-resolution coordinates to pixels of the SAM input.
+
+        Shapes are in level-0 pixels; the SAM input is the displayed plane,
+        which is smaller at a lower resolution level.
+        """
+        if not self.width or not self.height:
+            return 1.0, 1.0
+        return image.shape[1] / self.width, image.shape[0] / self.height
+
     def _resize_mask_to_image(self, mask: np.ndarray) -> np.ndarray:
         """Nearest-neighbor resize mask to (self.height, self.width)."""
         if mask.shape == (self.height, self.width):
@@ -253,10 +263,11 @@ class SAMIntegrationMixin:
         if image is None:
             return
 
-        x1 = int(roi["x"])
-        y1 = int(roi["y"])
-        x2 = int(roi["x"] + roi["width"])
-        y2 = int(roi["y"] + roi["height"])
+        sx, sy = self._sam_scale(image)
+        x1 = int(roi["x"] * sx)
+        y1 = int(roi["y"] * sy)
+        x2 = int((roi["x"] + roi["width"]) * sx)
+        y2 = int((roi["y"] + roi["height"]) * sy)
 
         try:
             results = self._sam_model.predict(image, bboxes=[[x1, y1, x2, y2]], verbose=False)
@@ -279,8 +290,9 @@ class SAMIntegrationMixin:
         if image is None:
             return
 
-        x = int(point["x"])
-        y = int(point["y"])
+        sx, sy = self._sam_scale(image)
+        x = int(point["x"] * sx)
+        y = int(point["y"] * sy)
 
         try:
             results = self._sam_model.predict(image, points=[[x, y]], labels=[1], verbose=False)

@@ -284,6 +284,8 @@ await page.waitForTimeout(20000);  // wait for cells to run
 - Level 0 = `_full_array` (full resolution); levels 1 and 2 are `None` until first access (step ×2, ×4)
 - `_get_pyramid_level(level)` materialises on demand: `full_array[:, :, :, ::step, ::step]`
 - `_on_resolution_change` detects synthetic vs native and dispatches accordingly
+- **Coordinates stay level 0.** A level change never touches `width`/`height`: shapes, masks, SAM prompts and the frontend's coordinate system are full-resolution pixels. `_on_resolution_change` sets `_level_shape = [h, w, level]` (`[]` at level 0); `_level_hw()` gives the level's size for the tile grid. JS (`levelGrid()`) cuts the tile grid in level pixels and scales each tile by `width / levelW`; it requests no tiles until `_level_shape[2] == current_resolution` (`levelReady()`).
+- Native pyramids switch level on a private copy of the caller's `BioImage` (`_private_bioimage`: shallow copy + copied reader), so the caller's `img` keeps its level.
 - `_clear_caches` resets materialised levels 1+ but preserves `_full_array`
 - JS auto-pyramid selection (already in `_esm`) picks the right level from zoom scale — works for both native and synthetic pyramids
 
