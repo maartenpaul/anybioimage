@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Masks can follow the T/Z sliders: `add_mask` accepts a (T, Y, X), (Z, Y, X) or (T, Z, Y, X)
   label stack (or TCZYX with one channel) and shows the frame for the current position.
   `dims="TYX"` / `"ZYX"` resolves images with as many time points as z-planes.
+- `viewer.set_channel(i, name=, color=, visible=, contrast_limits=(low, high))` and
+  `viewer.channels_df`: public channel API, contrast limits in data values.
 - Opt-in `render_backend="viv"`: remote OME-Zarr rendered via WebGL2 with
   browser-direct chunk fetch (no Python tile round-trips). Main UI unchanged.
 - `set_image(url, headers=...)` accepts URL-schemed `.zarr`/`.ome.zarr` strings
@@ -47,6 +49,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   before, they changed nothing on screen.
 - After a T/Z step the canvas no longer shows the previous plane at full brightness while the
   new plane loads: the old picture is dimmed with a "Loading T 5/9" badge until it arrives.
+- Zooming out to a lower resolution level no longer changes the image's coordinates:
+  `width`/`height`, rectangles, polygons and points stay in full-resolution pixels, masks
+  stay aligned (they were drawn 2x / 4x too large), SAM prompts are scaled, and the view no
+  longer jumps when the level switches.
+- The viewer switches resolution levels on its own copy of a `BioImage`; the caller's
+  object keeps its level. Loading a new image resets the level.
 
 ### Performance
 - Canvas2D: T/Z steps to planes already loaded in the browser take ~55 ms instead of ~450 ms
