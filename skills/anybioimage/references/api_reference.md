@@ -76,8 +76,7 @@ All coordinates are in **image pixel space** (not screen/canvas space).
 
 ```python
 viewer.rois_df          # get: DataFrame with columns id, x, y, width, height, t, z
-                        # x/y/width/height: pixels of the displayed resolution level;
-                        # a shape does not store the level, so draw at >= 50% zoom (level 0)
+                        # x/y/width/height: full-resolution pixels at any zoom level
 viewer.rois_df = df     # set: DataFrame with same columns
 viewer.clear_rois()
 ```
@@ -156,8 +155,8 @@ These are synchronized between Python and the JavaScript frontend. All can be re
 | Traitlet | Type | Description |
 |----------|------|-------------|
 | `image_data` | `Unicode` | Base64 PNG of current rendered frame |
-| `width` | `Int` | Image width in pixels |
-| `height` | `Int` | Image height in pixels |
+| `width` | `Int` | Image width in full-resolution pixels (unchanged by zoom level) |
+| `height` | `Int` | Image height in full-resolution pixels |
 | `image_visible` | `Bool` | Show/hide base image |
 | `image_brightness` | `Float` | -1.0 to 1.0 |
 | `image_contrast` | `Float` | -1.0 to 1.0 |
@@ -187,7 +186,15 @@ These are synchronized between Python and the JavaScript frontend. All can be re
 
 ## Channel Settings
 
-`viewer._channel_settings` is a list of dicts, one per channel:
+```python
+viewer.set_channel(index, *, name=None, color=None, visible=None, contrast_limits=None)
+# contrast_limits: (low, high) in data values; clipped to the channel's data range.
+# IndexError for a bad index, ValueError when low >= high.
+viewer.channels_df
+# Columns: index, name, color, visible, contrast_min, contrast_max (data values), data_min, data_max
+```
+
+Internally the settings live in `viewer._channel_settings`, a list of dicts, one per channel:
 
 ```python
 {
@@ -201,16 +208,9 @@ These are synchronized between Python and the JavaScript frontend. All can be re
 }
 ```
 
-Example: set channel 0 to red, channel 1 to cyan. Copy the dicts, not only the list:
-editing the existing dicts in place changes the old value too, traitlets sees no change,
-and nothing is redrawn.
-
-```python
-settings = [dict(c) for c in viewer._channel_settings]
-settings[0]["color"] = "#ff0000"
-settings[1]["color"] = "#00ffff"
-viewer._channel_settings = settings
-```
+Prefer `set_channel`. When assigning `_channel_settings` directly, copy the dicts
+(`[dict(c) for c in viewer._channel_settings]`): editing them in place is not seen as a
+change and nothing is redrawn.
 
 Default channel colors follow the `CHANNEL_COLORS` palette: GFP green, RFP red, DAPI blue, etc.
 

@@ -39,11 +39,10 @@ viewer.set_image(img)
 # User can toggle channels and adjust contrast in the viewer
 
 # Programmatically set channel colors
-settings = [dict(c) for c in viewer._channel_settings]  # copy the dicts, or nothing updates
-settings[0]["color"] = "#0000ff"  # DAPI → blue
-settings[1]["color"] = "#00ff00"  # GFP → green
-settings[2]["color"] = "#ff0000"  # RFP → red
-viewer._channel_settings = settings
+viewer.set_channel(0, name="DAPI", color="#0000ff")
+viewer.set_channel(1, name="GFP", color="#00ff00", contrast_limits=(200, 3000))  # data values
+viewer.set_channel(2, name="RFP", color="#ff0000", visible=False)
+viewer.channels_df  # current colours and contrast windows
 
 viewer
 ```
