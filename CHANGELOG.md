@@ -58,6 +58,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   instead of 1.6 s. Tiles requested before a channel colour/contrast change are discarded,
   so no tile in the old colour can stay on screen.
 
+### Documentation
+- Agent skill in `skills/anybioimage/` (SKILL.md format) describing how to use the viewer
+  correctly from coding agents; see the README section "Using anybioimage with AI coding agents".
+
 ### Build
 - `anybioimage/frontend/viewer/` esbuild bundle for the viv backend; pre-built
   bundle committed and shipped in the wheel (no Node at install time).
