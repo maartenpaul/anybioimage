@@ -37,6 +37,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - T/Z sliders now update the picture on images under 1 megapixel; before, the status text
   moved but the canvas stayed on the old plane.
 
+### Performance
+- Canvas2D tiles: one tile request in flight at a time, visible plane before prefetch, and a
+  faster base64 decode. Measured in marimo on a 2048x2048 OME-Zarr: first visit to a plane
+  2.0 s median instead of 2.9 s (worst 2.3 s instead of 4.2 s), longest page freeze 0.66 s
+  instead of 1.6 s. Tiles requested before a channel colour/contrast change are discarded,
+  so no tile in the old colour can stay on screen.
+
 ### Build
 - `anybioimage/frontend/viewer/` esbuild bundle for the viv backend; pre-built
   bundle committed and shipped in the wheel (no Node at install time).
