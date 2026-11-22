@@ -1,6 +1,7 @@
 """Image loading mixin for BioImageViewer."""
 
 import base64
+import copy
 import logging
 import sys
 import threading
@@ -21,6 +22,30 @@ logger = logging.getLogger(__name__)
 
 # If the full image array fits within this threshold, load it all into RAM eagerly.
 _EAGER_LOAD_BYTES = 2 * 1024 ** 3  # 2 GB
+
+
+def _private_bioimage(img):
+    """Return a BioImage the viewer may switch between resolution levels.
+
+    ``set_resolution_level`` changes the reader in place, so using the
+    caller's object would change what their own ``img.dask_data`` returns.
+    A shallow copy with its own copy of the reader keeps the level separate
+    (file handles and caches are still shared). Always starts at level 0.
+    """
+    levels = getattr(img, "resolution_levels", None)
+    if not isinstance(levels, (list, tuple)) or len(levels) <= 1:
+        return img
+    try:
+        view = copy.copy(img)
+        reader = getattr(img, "_reader", None)
+        if reader is not None:
+            view._reader = copy.copy(reader)
+        if getattr(view, "current_resolution_level", 0) != 0:
+            view.set_resolution_level(0)
+        return view
+    except Exception as e:  # unknown BioImage subclass: fall back to the original
+        logger.debug("Could not copy BioImage, using it directly: %s", e)
+        return img
 
 _THUMBNAIL_MAX = 512  # Max dimension for tile-mode thumbnail (used as baseImage fallback)
 
@@ -334,6 +359,7 @@ class ImageLoadingMixin:
             self.dim_z = _dim("z")
             self.height = _dim("y")
             self.width = _dim("x")
+            self._level_shape = []
             self.current_t = 0
             self.current_z = 0
             self._channel_settings = channels
@@ -408,6 +434,8 @@ class ImageLoadingMixin:
             self.current_c = 0
             self.current_z = 0
             self.resolution_levels = []
+            self.current_resolution = 0
+            self._level_shape = []
             self.scenes = []
             self._bioimage = None
             self._raw_numpy_array = None
@@ -449,7 +477,8 @@ class ImageLoadingMixin:
             self._zarr_source = {}
             if hasattr(self, "_detach_bridge"):
                 self._detach_bridge()
-        self._bioimage = img
+        self._bioimage = _private_bioimage(img)
+        img = self._bioimage
         self._full_array = None
 
         # Pre-load full array into RAM if it fits (avoids per-slice zarr I/O during navigation)
@@ -521,9 +550,10 @@ class ImageLoadingMixin:
             # Extract resolution levels if available
             if hasattr(img, "resolution_levels") and img.resolution_levels:
                 self.resolution_levels = list(img.resolution_levels)
-                self.current_resolution = 0
             else:
                 self.resolution_levels = []
+            self.current_resolution = 0
+            self._level_shape = []
 
             # Extract scenes if available
             if hasattr(img, "scenes") and img.scenes:
@@ -753,13 +783,14 @@ class ImageLoadingMixin:
         elif cache_key in self._tile_cache:
             return self._tile_cache[cache_key]
 
+        level_h, level_w = self._level_hw()
         y_start = tile_y * self._tile_size
         x_start = tile_x * self._tile_size
-        if y_start >= self.height or x_start >= self.width:
+        if y_start >= level_h or x_start >= level_w:
             return None
 
-        y_end = min(y_start + self._tile_size, self.height)
-        x_end = min(x_start + self._tile_size, self.width)
+        y_end = min(y_start + self._tile_size, level_h)
+        x_end = min(x_start + self._tile_size, level_w)
 
         composite = self._get_composite_slice(t, z)
         if composite is None:
@@ -859,8 +890,9 @@ class ImageLoadingMixin:
         """Pre-render all tiles for a (t, z) slice into the tile cache."""
         if self._bioimage is None:
             return
-        n_tiles_x = (self.width + self._tile_size - 1) // self._tile_size
-        n_tiles_y = (self.height + self._tile_size - 1) // self._tile_size
+        level_h, level_w = self._level_hw()
+        n_tiles_x = (level_w + self._tile_size - 1) // self._tile_size
+        n_tiles_y = (level_h + self._tile_size - 1) // self._tile_size
         for ty in range(n_tiles_y):
             for tx in range(n_tiles_x):
                 cache_key = (t, z, tx, ty, self.current_resolution)
@@ -897,8 +929,9 @@ class ImageLoadingMixin:
         t_center, z_center = self.current_t, self.current_z
         res = self.current_resolution
 
-        n_tiles_x = (self.width + self._tile_size - 1) // self._tile_size
-        n_tiles_y = (self.height + self._tile_size - 1) // self._tile_size
+        level_h, level_w = self._level_hw()
+        n_tiles_x = (level_w + self._tile_size - 1) // self._tile_size
+        n_tiles_y = (level_h + self._tile_size - 1) // self._tile_size
 
         slices = sorted(
             [(t, z) for t in range(self.dim_t) for z in range(self.dim_z)],
@@ -1084,8 +1117,9 @@ class ImageLoadingMixin:
             return False
         tx0, ty0, tx1, ty1 = vp
         res = self.current_resolution
-        n_tiles_x = (self.width + self._tile_size - 1) // self._tile_size
-        n_tiles_y = (self.height + self._tile_size - 1) // self._tile_size
+        level_h, level_w = self._level_hw()
+        n_tiles_x = (level_w + self._tile_size - 1) // self._tile_size
+        n_tiles_y = (level_h + self._tile_size - 1) // self._tile_size
         for ty in range(max(0, ty0), min(n_tiles_y, ty1)):
             for tx in range(max(0, tx0), min(n_tiles_x, tx1)):
                 if (t, z, tx, ty, res) not in self._tile_cache:
@@ -1145,7 +1179,7 @@ class ImageLoadingMixin:
 
                 if not visible_channels:
                     if not preview_mode:
-                        normalized = np.zeros((self.height, self.width), dtype=np.uint8)
+                        normalized = np.zeros(self._level_hw(), dtype=np.uint8)
                         self._image_array = normalized
                         self.image_data = array_to_base64(normalized)
                     return
@@ -1218,6 +1252,75 @@ class ImageLoadingMixin:
         )
         self._image_array = np.mean(composite, axis=2).astype(np.uint8)
         self.image_data = array_to_base64(composite)
+
+    def set_channel(
+        self,
+        index: int,
+        *,
+        name: str | None = None,
+        color: str | None = None,
+        visible: bool | None = None,
+        contrast_limits: tuple[float, float] | None = None,
+    ) -> None:
+        """Change one channel's display settings.
+
+        Args:
+            index: Channel index (0-based).
+            name: Label shown in the layers panel.
+            color: Hex colour, e.g. ``"#00ff00"``.
+            visible: Show or hide the channel.
+            contrast_limits: ``(low, high)`` in data values (the image's own
+                intensities, like napari's ``contrast_limits``). Values outside
+                the channel's data range are clipped to it.
+        """
+        settings = [dict(c) for c in self._channel_settings]
+        if not 0 <= index < len(settings):
+            raise IndexError(f"channel {index} out of range: the image has {len(settings)} channels")
+        ch = settings[index]
+        if name is not None:
+            ch["name"] = str(name)
+        if color is not None:
+            ch["color"] = color
+        if visible is not None:
+            ch["visible"] = bool(visible)
+        if contrast_limits is not None:
+            low, high = (float(v) for v in contrast_limits)
+            if high <= low:
+                raise ValueError(f"contrast_limits must be (low, high) with low < high, got {contrast_limits}")
+            data_min = float(ch.get("data_min", 0.0))
+            data_max = float(ch.get("data_max", 1.0))
+            span = data_max - data_min
+            if span > 0:
+                ch["min"] = min(max((low - data_min) / span, 0.0), 1.0)
+                ch["max"] = min(max((high - data_min) / span, 0.0), 1.0)
+        self._channel_settings = settings
+
+    @property
+    def channels_df(self):
+        """Channel display settings, one row per channel.
+
+        Columns: index, name, color, visible, contrast_min, contrast_max
+        (data values), data_min, data_max.
+        """
+        import pandas as pd
+
+        rows = []
+        for i, ch in enumerate(self._channel_settings):
+            data_min = float(ch.get("data_min", 0.0))
+            data_max = float(ch.get("data_max", 1.0))
+            span = data_max - data_min
+            rows.append({
+                "index": i,
+                "name": ch.get("name", f"Channel {i}"),
+                "color": ch.get("color", "#ffffff"),
+                "visible": bool(ch.get("visible", True)),
+                "contrast_min": data_min + float(ch.get("min", 0.0)) * span,
+                "contrast_max": data_min + float(ch.get("max", 1.0)) * span,
+                "data_min": data_min,
+                "data_max": data_max,
+            })
+        return pd.DataFrame(rows, columns=["index", "name", "color", "visible", "contrast_min",
+                                           "contrast_max", "data_min", "data_max"])
 
     def _compute_auto_contrast(self, ch_idx: int, t: int | None = None, z: int | None = None) -> dict:
         """Return normalized {min, max} for ch_idx using p2/p98 of the given slice."""
@@ -1334,6 +1437,18 @@ class ImageLoadingMixin:
         self._update_slice()
         self._start_precompute()
 
+    def _level_hw(self) -> tuple[int, int]:
+        """(height, width) of the displayed resolution level, in its own pixels.
+
+        ``width`` / ``height`` always stay at level 0: annotations, masks and
+        the frontend's coordinate system are full-resolution pixels. Only the
+        tile grid and the pixel data come from the current level.
+        """
+        shape = getattr(self, "_level_shape", None)
+        if shape and len(shape) >= 2:
+            return int(shape[0]), int(shape[1])
+        return int(self.height), int(self.width)
+
     def _on_resolution_change(self, change):
         """Observer callback when resolution level changes."""
         level = change.get("new", 0)
@@ -1342,34 +1457,40 @@ class ImageLoadingMixin:
         pyramid = getattr(self, "_pyramid", None)
         pyramid_has_native = getattr(self, "_pyramid_has_native", False)
         if pyramid is not None and not pyramid_has_native:
+            if level == 0 and not getattr(self, "_level_shape", None):
+                return  # already at level 0 (e.g. reset by set_image)
             try:
                 arr = self._get_pyramid_level(level)
                 self._clear_caches(clear_full_array=False)  # keep _full_array = level 0
-                self.height = arr.shape[3]
-                self.width = arr.shape[4]
-                bytes_per_composite = self.height * self.width * 3
+                self._level_shape = [] if level == 0 else [int(arr.shape[3]), int(arr.shape[4]), int(level)]
+                bytes_per_composite = arr.shape[3] * arr.shape[4] * 3
                 max_by_memory = (512 * 1024 * 1024) // max(bytes_per_composite, 1)
                 self._composite_cache_max_size = max(64, min(self.dim_t * self.dim_z, max_by_memory, 1024))
                 self._update_slice()
                 self._start_precompute()
             except Exception as e:
                 logger.warning("Error changing synthetic resolution level: %s", e)
+                self.current_resolution = change.get("old", 0)
             return
 
         if self._bioimage is None or not hasattr(self._bioimage, "set_resolution_level"):
             return
 
+        if getattr(self._bioimage, "current_resolution_level", None) == level:
+            return  # already there (e.g. reset to 0 by set_image)
+
         try:
             self._bioimage.set_resolution_level(level)
             self._clear_caches()
-            self.height = self._bioimage.dims.Y
-            self.width = self._bioimage.dims.X
-            bytes_per_composite = self.height * self.width * 3
+            level_h, level_w = int(self._bioimage.dims.Y), int(self._bioimage.dims.X)
+            self._level_shape = [] if level == 0 else [level_h, level_w, int(level)]
+            bytes_per_composite = level_h * level_w * 3
             max_by_memory = (512 * 1024 * 1024) // max(bytes_per_composite, 1)
             self._composite_cache_max_size = max(64, min(self.dim_t * self.dim_z, max_by_memory, 1024))
             self._update_slice()
         except Exception as e:
             logger.warning("Error changing resolution level: %s", e)
+            self.current_resolution = change.get("old", 0)
 
     def _on_scene_change(self, change):
         """Observer callback when scene changes."""
@@ -1384,6 +1505,10 @@ class ImageLoadingMixin:
         try:
             self._bioimage.set_scene(new_scene)
             self._clear_caches()
+            self._level_shape = []
+            if self.current_resolution != 0:
+                with self.hold_trait_notifications():
+                    self.current_resolution = 0
             self.dim_t = self._bioimage.dims.T
             self.dim_c = self._bioimage.dims.C
             self.dim_z = self._bioimage.dims.Z

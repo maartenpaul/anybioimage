@@ -46,24 +46,20 @@ viewer.set_image(np.moveaxis(a, -1, 1)[:, :, None])  # (T, Y, X, C) -> (T, C, 1,
 
 Use `BioImage("file.ome.tif")` when the file carries its own dimension metadata.
 
-**The viewer changes the resolution level of the `BioImage` you pass.** Zooming out
-calls `img.set_resolution_level(n)` on that same object, so `img.dask_data` /
-`img.get_image_data(...)` afterwards return the lower level. Read analysis data and crops
-from a second `BioImage` opened on the same path. Do not reset the level on the object the
-viewer uses: the viewer would then read level-0 data at the lower level's size.
+Zooming out switches to a lower resolution level for speed, on the viewer's own copy of
+the `BioImage`: your `img` keeps its level, and `viewer.width` / `height`, shapes and masks
+stay in full-resolution pixels at every zoom.
 
-**Channels** (colour, visibility, contrast) live in `viewer._channel_settings`, a list of
-dicts. Assign a new list of copied dicts; editing the dicts in place does nothing:
+**Channels** (colour, visibility, contrast):
 
 ```python
-settings = [dict(c) for c in viewer._channel_settings]
-settings[0].update(color="#0000ff", name="DAPI")
-settings[1].update(color="#00ff00", visible=False, min=0.05, max=0.6)
-viewer._channel_settings = settings
+viewer.set_channel(0, name="DAPI", color="#0000ff")
+viewer.set_channel(1, color="#00ff00", visible=False,
+                   contrast_limits=(120, 2400))   # data values, like napari
+viewer.channels_df   # index, name, color, visible, contrast_min, contrast_max, data_min, data_max
 ```
 
-`min` / `max` are fractions of that channel's `[data_min, data_max]` (also in the dict). For a
-percentile window: `lo = (np.percentile(ch, 2) - data_min) / (data_max - data_min)`.
+Percentile window: `contrast_limits=tuple(np.percentile(img_c, [2, 99.8]))`.
 
 ## Jupyter vs marimo
 
@@ -134,14 +130,8 @@ Set the starting tool with `viewer.tool_mode = "point"`.
 
 - `t` / `z` are the slider position when the shape was drawn. Crop with
   `img[t, z, y:y+height, x:x+width]` on your TCZYX array (index the channel too).
-- Coordinates are pixels of the **displayed resolution level**. Every `BioImage` input
-  has levels (OME-Zarr's own, or a 2x/4x pyramid built for flat files such as TIFF);
-  wheel-zooming out below 50% switches to a lower level and `viewer.width` / `height`
-  shrink with it. A shape does not record the level it was drawn at. Reliable options:
-  ask the user to draw at 50% zoom or more (level 0), or check that
-  `viewer.current_resolution` has not changed since drawing and multiply by
-  `2 ** viewer.current_resolution` (OME-Zarr levels are usually factor 2; check the store
-  if not). numpy input has no levels.
+- Coordinates are full-resolution pixels at any zoom level, so they index the level-0
+  array directly.
 - Set annotations with `viewer.rois_df = df` (missing t/z default to 0). Clear with
   `clear_rois()`, `clear_polygons()`, `clear_points()`, `clear_all_annotations()`.
 - `viewer.annotation_scope = "current"` shows only shapes drawn on the current T/Z.
@@ -188,11 +178,9 @@ viewer.set_plate("https://host/plate.zarr")                # HCS: Well / FOV dro
 | Z-stack shows no Z slider, or T and Z swapped | 4D read as CZYX | build TCZYX: `stack[:, None]` for (T, Z, Y, X) |
 | Table of drawn shapes never updates (marimo) | cell reads `viewer.rois_df` | read `widget.value["_rois_data"]` |
 | `ValueError` from `add_mask` with a stack | stack length matches neither T nor Z, or T == Z | check shapes; pass `dims="TYX"` / `"ZYX"` |
-| Crops come out at half / quarter size or offset | drawn at a lower pyramid level | draw at >= 50% zoom, or scale by `2 ** level` of the level used while drawing |
 | Masks / drawing tools do nothing | Viv backend | drop `render_backend="viv"` for annotation work |
 | `ImportError ... anybioimage[zarr]` | zarr extra missing | `pip install "anybioimage[zarr]"` |
-| Full-resolution reads from a `BioImage` come back smaller | the viewer switched its level | read from a second `BioImage(path)` |
-| Channel colour change has no effect | dicts in `_channel_settings` edited in place | assign `[dict(c) for c in ...]` with changes |
+| Channel colour change has no effect | dicts in `viewer._channel_settings` edited in place | use `viewer.set_channel(i, color=...)` |
 | marimo shows nothing | viewer not wrapped | `mo.ui.anywidget(viewer)` as the cell output |
 
 ## Reference files
