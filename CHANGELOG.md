@@ -7,9 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.4.0] - 2026-11-21
+## [0.4.0] - 2026-11-22
 
 ### Added
+- Masks can follow the T/Z sliders: `add_mask` accepts a (T, Y, X), (Z, Y, X) or (T, Z, Y, X)
+  label stack (or TCZYX with one channel) and shows the frame for the current position.
+  `dims="TYX"` / `"ZYX"` resolves images with as many time points as z-planes.
 - Opt-in `render_backend="viv"`: remote OME-Zarr rendered via WebGL2 with
   browser-direct chunk fetch (no Python tile round-trips). Main UI unchanged.
 - `set_image(url, headers=...)` accepts URL-schemed `.zarr`/`.ome.zarr` strings
@@ -20,6 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `set_image(..., storage_options=)` / `set_plate(..., storage_options=)` for fsspec credentials; new `remote` extra (s3fs, gcsfs).
 
 ### Changed
+- `add_mask` raises `ValueError` for a label stack that does not fit the image's T/Z sizes;
+  before, it silently showed the first frame on every plane.
 - Canvas2D ESM extracted verbatim to `anybioimage/frontend/viewer/src/canvas2d-chrome.js`
   (served raw — behavior identical; no Node needed for the default backend).
 - zarr support is an optional extra: `pip install "anybioimage[zarr]"` (`zarr>=3.1`,
