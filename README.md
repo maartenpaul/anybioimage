@@ -207,6 +207,22 @@ The Viv backend builds on [Viv](https://github.com/hms-dbmi/viv) (MIT),
 | `all` | bioio + zarr + remote + contours | Recommended (no PyTorch) |
 | `complete` | all + sam | Everything |
 
+## Using anybioimage with AI coding agents
+
+[`skills/anybioimage/`](skills/anybioimage/SKILL.md) is an agent skill (the `SKILL.md`
+format used by Claude Code and other agents) that teaches an agent how to use the viewer
+correctly: how numpy axes are read, reshaping time-lapses and z-stacks, label stacks that
+follow the sliders, reading user annotations back in marimo, the Viv backend and its
+limits, and common mistakes. Install it by linking the folder into your agent's skills
+directory, for example for Claude Code:
+
+```bash
+ln -s "$(pwd)/skills/anybioimage" ~/.claude/skills/anybioimage
+```
+
+The skill is kept next to the code so it changes with it; update it in the same pull
+request when behaviour it describes changes.
+
 ## License
 
 MIT

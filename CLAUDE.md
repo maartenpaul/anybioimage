@@ -30,6 +30,12 @@ anybioimage/
     └── sam_integration.py # SAM model integration
 ```
 
+## Agent skill
+
+`skills/anybioimage/SKILL.md` (+ `references/`) tells agents how to *use* the package. When a
+change alters user-facing behaviour it describes (input handling, masks, annotations,
+backends, extras), update the skill in the same PR.
+
 ## Development
 
 This project uses `uv` for package management:
