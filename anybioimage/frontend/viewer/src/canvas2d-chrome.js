@@ -960,6 +960,7 @@
         // Drawing it as if current showed the wrong plane under the new
         // T/Z label; instead it is dimmed and marked as loading.
         let baseImagePlane = null;
+        let imageLayer = null;  // offscreen canvas, used only when a brightness/contrast filter is set
         let staleSince = 0;
         let staleTimer = null;
         const STALE_DELAY_MS = 150;  // fast steps never flash the indicator
@@ -1111,15 +1112,25 @@
             const contrast = model.get('image_contrast') || 0;
             const brightnessPercent = (brightness * 100);
             const contrastPercent = ((contrast + 1) * 100);
+            // A canvas filter makes every drawImage much slower in Chrome, even
+            // an identity one, so leave it off at the default brightness/contrast.
+            const imageFilter = (brightness === 0 && contrast === 0)
+                ? 'none'
+                : `brightness(${100 + brightnessPercent}%) contrast(${contrastPercent}%)`;
 
             // Is the picture underneath from another plane than the one selected?
-            let tilesComplete = false;
+            // Only judged in tile mode: there the selected plane's tiles always
+            // arrive and clear it. In non-tile mode Python sends a preview for
+            // every step, and an unchanged preview (identical planes) sends no
+            // update at all, which would leave the indicator up for good.
+            let tilesComplete = true;
             if (useTileMode) {
                 const vt = getVisibleTiles(scale, translateX, translateY, canvas.width, canvas.height,
                     imgWidth, imgHeight, model.get('current_t'), model.get('current_z'));
-                tilesComplete = vt.length > 0 && vt.every(tile => tileCache.has(tile.key));
+                tilesComplete = vt.every(tile => tileCache.has(tile.key));  // true when nothing is in view
             }
-            const stale = !!baseImage && baseImagePlane !== null && baseImagePlane !== planeKey() && !tilesComplete;
+            const stale = useTileMode && !!baseImage && baseImagePlane !== null
+                && baseImagePlane !== planeKey() && !tilesComplete;
             let showStale = false;
             if (stale) {
                 if (!staleSince) staleSince = performance.now();
@@ -1133,17 +1144,7 @@
                 staleSince = 0;
             }
 
-            // Background: draw thumbnail if available, checkerboard only before first load
-            if (model.get('image_visible') && baseImage) {
-                ctx.save();
-                ctx.filter = `brightness(${100 + brightnessPercent}%) contrast(${contrastPercent}%)`
-                    + (showStale ? ' brightness(45%)' : '');
-                ctx.translate(translateX, translateY);
-                ctx.scale(scale, scale);
-                // Stretch thumbnail to full image dimensions — tiles overdraw at full resolution
-                ctx.drawImage(baseImage, 0, 0, imgWidth, imgHeight);
-                ctx.restore();
-            } else {
+            if (!(model.get('image_visible') && baseImage)) {
                 // Checkerboard fallback (shown only before any image is loaded)
                 const checkSize = 10;
                 ctx.fillStyle = '#2a2a2a';
@@ -1158,10 +1159,34 @@
                 }
             }
 
-            ctx.save();
-
             if (model.get('image_visible')) {
-                ctx.filter = `brightness(${100 + brightnessPercent}%) contrast(${contrastPercent}%)`;
+                // The image (preview + tiles) is drawn without a canvas filter:
+                // in Chrome a filter costs ~8 ms per drawImage, ~500 ms for 64
+                // tiles, even when it is the identity. With brightness/contrast
+                // set, draw unfiltered into an offscreen layer and apply the
+                // filter once (~20 ms).
+                let ictx = ctx;
+                if (imageFilter !== 'none') {
+                    if (!imageLayer) imageLayer = document.createElement('canvas');
+                    imageLayer.width = canvas.width;   // also clears it
+                    imageLayer.height = canvas.height;
+                    ictx = imageLayer.getContext('2d');
+                    ictx.imageSmoothingEnabled = ctx.imageSmoothingEnabled;
+                }
+
+                if (baseImage) {
+                    ictx.save();
+                    ictx.translate(translateX, translateY);
+                    ictx.scale(scale, scale);
+                    // Stretch thumbnail to full image dimensions — tiles overdraw at full resolution
+                    ictx.drawImage(baseImage, 0, 0, imgWidth, imgHeight);
+                    if (showStale) {
+                        // Dim the out-of-date picture (an overlay, not a filter: free)
+                        ictx.fillStyle = 'rgba(0, 0, 0, 0.55)';
+                        ictx.fillRect(0, 0, imgWidth, imgHeight);
+                    }
+                    ictx.restore();
+                }
 
                 if (useTileMode) {
                     const t = model.get('current_t'), z = model.get('current_z');
@@ -1175,7 +1200,7 @@
                         if (img) {
                             const screenX = Math.round(tile.tx * TILE_SIZE * scale + translateX);
                             const screenY = Math.round(tile.ty * TILE_SIZE * scale + translateY);
-                            ctx.drawImage(img, screenX, screenY,
+                            ictx.drawImage(img, screenX, screenY,
                                 Math.ceil(img.width * scale), Math.ceil(img.height * scale));
                         } else {
                             allCached = false;
@@ -1186,12 +1211,15 @@
                         prefetchAdjacentTiles(visibleTiles, t, z);
                     }
                 }
-                // Non-tile mode: baseImage already drawn above as background
+                // Non-tile mode: the preview drawn above is the image
 
-                ctx.filter = 'none';
+                if (ictx !== ctx) {
+                    ctx.save();
+                    ctx.filter = imageFilter;
+                    ctx.drawImage(imageLayer, 0, 0);
+                    ctx.restore();
+                }
             }
-
-            ctx.restore();
 
             // Draw cache progress bar (outside save/restore stack, no transform applied)
             const cacheProgress = model.get('_cache_progress') || 0;
