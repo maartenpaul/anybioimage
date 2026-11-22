@@ -5,9 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased] — v0.7.0-alpha
+## [Unreleased]
+
+## [0.4.0] - 2026-11-22
 
 ### Added
+- Mask colour mode: `add_mask(color=...)` or the layers-panel swatch draws the whole mask in one
+  colour; by default each label keeps its own colour. New "Single colour" checkbox in the panel.
+- Masks can follow the T/Z sliders: `add_mask` accepts a (T, Y, X), (Z, Y, X) or (T, Z, Y, X)
+  label stack (or TCZYX with one channel) and shows the frame for the current position.
+  `dims="TYX"` / `"ZYX"` resolves images with as many time points as z-planes.
+- `viewer.set_channel(i, name=, color=, visible=, contrast_limits=(low, high))` and
+  `viewer.channels_df`: public channel API, contrast limits in data values.
 - Opt-in `render_backend="viv"`: remote OME-Zarr rendered via WebGL2 with
   browser-direct chunk fetch (no Python tile round-trips). Main UI unchanged.
 - `set_image(url, headers=...)` accepts URL-schemed `.zarr`/`.ome.zarr` strings
@@ -18,6 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `set_image(..., storage_options=)` / `set_plate(..., storage_options=)` for fsspec credentials; new `remote` extra (s3fs, gcsfs).
 
 ### Changed
+- `add_mask` raises `ValueError` for a label stack that does not fit the image's T/Z sizes;
+  before, it silently showed the first frame on every plane.
 - Canvas2D ESM extracted verbatim to `anybioimage/frontend/viewer/src/canvas2d-chrome.js`
   (served raw — behavior identical; no Node needed for the default backend).
 - zarr support is an optional extra: `pip install "anybioimage[zarr]"` (`zarr>=3.1`,
@@ -25,10 +36,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Loading a zarr store without the extra raises an ImportError naming the install command.
   Browser-direct `http(s)` URLs on the viv backend need no extra.
 - `requires-python` is now `>=3.11`.
-- Dependency floors raised to tested versions: `numpy>=1.26`, `pandas>=1.5`, `pillow>=9.2`.
+- Dependency floors raised to tested versions: `numpy>=1.26`, `pandas>=1.5`, `pillow>=9.2`,
+  `bioio>=3.0` in the `bioio` extra.
 - An unreachable zarr host now raises `ConnectionError` naming the URL instead of a
   bioio "unsupported file format" traceback.
 - Example notebooks point at the new IDR host (`livingobjects.ebi.ac.uk`).
+
+### Fixed
+- T/Z sliders now update the picture on images under 1 megapixel; before, the status text
+  moved but the canvas stayed on the old plane.
+- The layers panel's mask colour swatch and "Contours only" checkbox now change the overlay;
+  before, they changed nothing on screen.
+- After a T/Z step the canvas no longer shows the previous plane at full brightness while the
+  new plane loads: the old picture is dimmed with a "Loading T 5/9" badge until it arrives.
+- Zooming out to a lower resolution level no longer changes the image's coordinates:
+  `width`/`height`, rectangles, polygons and points stay in full-resolution pixels, masks
+  stay aligned (they were drawn 2x / 4x too large), SAM prompts are scaled, and the view no
+  longer jumps when the level switches.
+- The viewer switches resolution levels on its own copy of a `BioImage`; the caller's
+  object keeps its level. Loading a new image resets the level.
+
+### Performance
+- Canvas2D: T/Z steps to planes already loaded in the browser take ~55 ms instead of ~450 ms
+  (2048x2048 image). Tiles were drawn through a canvas filter even at default
+  brightness/contrast, which costs ~8 ms per tile in Chrome.
+- Canvas2D tiles: one tile request in flight at a time, visible plane before prefetch, and a
+  faster base64 decode. Measured in marimo on a 2048x2048 OME-Zarr: first visit to a plane
+  2.0 s median instead of 2.9 s (worst 2.3 s instead of 4.2 s), longest page freeze 0.66 s
+  instead of 1.6 s. Tiles requested before a channel colour/contrast change are discarded,
+  so no tile in the old colour can stay on screen.
+
+### Documentation
+- Agent skill in `skills/anybioimage/` (SKILL.md format) describing how to use the viewer
+  correctly from coding agents; see the README section "Using anybioimage with AI coding agents".
 
 ### Build
 - `anybioimage/frontend/viewer/` esbuild bundle for the viv backend; pre-built
